@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Mirror Makefile defaults: REGISTRY, IMAGE, TAG → IMAGE_REF $(REGISTRY)/$(IMAGE):$(TAG)
+env:
+  REGISTRY: quay.io/ocs-dev
+  IMAGE: fusion-access-migration-tool
+  TAG: latest
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Verify formatting (make fmt)
+        run: |
+          make fmt
+          git diff --exit-code
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint (make lint)
+        run: make lint
+
+      - name: Build
+        run: go build -o /tmp/migrate ./cmd/migrate
+
+      - name: Test
+        run: go test ./...
+
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Registry hostname for docker login
+        id: reg
+        run: echo "host=${REGISTRY%%/*}" >> "$GITHUB_OUTPUT"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ steps.reg.outputs.host }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.TAG }}

@@ -1,0 +1,12 @@
+.git
+.github
+.cursor
+.gopath
+.gomodcache
+bin
+dist
+tmp
+*.log
+*.out
+migrate
+.DS_Store
