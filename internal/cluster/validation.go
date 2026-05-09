@@ -55,6 +55,192 @@ func ValidateOCPVersion(mc *kube.Context) error {
 	return nil
 }
 
+func ValidateBasicClusterHealth(mc *kube.Context) error {
+	cv, err := mc.Dynamic.Resource(constants.ClusterVersionGVR).Get(mc.Ctx, "version", metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get ClusterVersion for health validation: %w", err)
+	}
+
+	conditions, found, err := unstructured.NestedSlice(cv.Object, "status", "conditions")
+	if err != nil {
+		return fmt.Errorf("failed to parse ClusterVersion status.conditions: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("ClusterVersion status.conditions not found")
+	}
+
+	failingStatus, failingMsg := clusterVersionConditionStatus(conditions, "Failing")
+	degradedStatus, degradedMsg := clusterVersionConditionStatus(conditions, "Degraded")
+	if strings.EqualFold(failingStatus, "True") || strings.EqualFold(degradedStatus, "True") {
+		return fmt.Errorf(
+			"cluster is not healthy: Failing=%s (%s), Degraded=%s (%s)",
+			emptyConditionStatus(failingStatus), emptyConditionMessage(failingMsg),
+			emptyConditionStatus(degradedStatus), emptyConditionMessage(degradedMsg),
+		)
+	}
+
+	output.PrintSuccess("Basic OCP cluster health validated (ClusterVersion is not failing/degraded)")
+	return nil
+}
+
+func clusterVersionConditionStatus(conditions []interface{}, conditionType string) (string, string) {
+	for _, cond := range conditions {
+		m, ok := cond.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ, _, _ := unstructured.NestedString(m, "type")
+		if typ != conditionType {
+			continue
+		}
+		status, _, _ := unstructured.NestedString(m, "status")
+		message, _, _ := unstructured.NestedString(m, "message")
+		reason, _, _ := unstructured.NestedString(m, "reason")
+		if reason != "" && message != "" {
+			return status, fmt.Sprintf("%s: %s", reason, message)
+		}
+		if reason != "" {
+			return status, reason
+		}
+		return status, message
+	}
+	return "", ""
+}
+
+func emptyConditionStatus(status string) string {
+	if status == "" {
+		return "Unknown"
+	}
+	return status
+}
+
+func emptyConditionMessage(msg string) string {
+	if msg == "" {
+		return "n/a"
+	}
+	return msg
+}
+
+func ValidateScaleClusterExists(mc *kube.Context) error {
+	clusterGVR, err := helpers.ResolveGVR(
+		mc.Ctx,
+		mc.Dynamic,
+		"scale.spectrum.ibm.com",
+		"clusters",
+		[]string{"v1beta1", "v1"},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to resolve Scale cluster API: %w", err)
+	}
+	clusterList, err := mc.Dynamic.Resource(clusterGVR).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list Scale clusters: %w", err)
+	}
+	if len(clusterList.Items) == 0 {
+		return fmt.Errorf("no Scale clusters found in namespace %s", constants.SpectrumScaleNS)
+	}
+
+	output.PrintSuccess(fmt.Sprintf("Scale cluster exists (%d found)", len(clusterList.Items)))
+	return nil
+}
+
+func ValidateScaleFilesystemHealthIfPresent(mc *kube.Context) error {
+	gvr := helpers.ParseGVR(constants.FilesystemResource)
+	fsList, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list filesystems in %s: %w", constants.SpectrumScaleNS, err)
+	}
+	if len(fsList.Items) == 0 {
+		output.PrintInfo(fmt.Sprintf("No filesystems found in namespace %s; skipping filesystem health validation", constants.SpectrumScaleNS))
+		return nil
+	}
+
+	var unhealthy []string
+	for _, fs := range fsList.Items {
+		name := fs.GetName()
+		phase, _, _ := unstructured.NestedString(fs.Object, "status", "phase")
+		mounted, _, _ := unstructured.NestedBool(fs.Object, "status", "mounted")
+		if phase == "" {
+			phase = "Unknown"
+		}
+		output.PrintInfo(fmt.Sprintf("Filesystem %s: phase=%s, mounted=%v", name, phase, mounted))
+		if !mounted {
+			unhealthy = append(unhealthy, fmt.Sprintf("%s (phase=%s, mounted=%v)", name, phase, mounted))
+		}
+	}
+	if len(unhealthy) > 0 {
+		return fmt.Errorf("filesystem health validation failed: %s", strings.Join(unhealthy, ", "))
+	}
+
+	output.PrintSuccess(fmt.Sprintf("Filesystem health validated (%d filesystem resources checked)", len(fsList.Items)))
+	return nil
+}
+
+func ValidateLocalDisksReadyIfPresent(mc *kube.Context) error {
+	gvr := helpers.ParseGVR(constants.LocalDiskResource)
+	diskList, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list localdisks in %s: %w", constants.SpectrumScaleNS, err)
+	}
+	if len(diskList.Items) == 0 {
+		output.PrintInfo(fmt.Sprintf("No localdisks found in namespace %s; skipping localdisk readiness validation", constants.SpectrumScaleNS))
+		return nil
+	}
+
+	var unhealthy []string
+	for _, disk := range diskList.Items {
+		ready, detail := localDiskReady(&disk)
+		if ready {
+			output.PrintInfo(fmt.Sprintf("LocalDisk %s: %s", disk.GetName(), detail))
+			continue
+		}
+		unhealthy = append(unhealthy, fmt.Sprintf("%s (%s)", disk.GetName(), detail))
+	}
+	if len(unhealthy) > 0 {
+		return fmt.Errorf("localdisk readiness validation failed: %s", strings.Join(unhealthy, ", "))
+	}
+
+	output.PrintSuccess(fmt.Sprintf("LocalDisk readiness validated (%d localdisk resources checked)", len(diskList.Items)))
+	return nil
+}
+
+func localDiskReady(disk *unstructured.Unstructured) (bool, string) {
+	phase, _, _ := unstructured.NestedString(disk.Object, "status", "phase")
+	state, _, _ := unstructured.NestedString(disk.Object, "status", "state")
+	if strings.EqualFold(phase, "Ready") {
+		return true, fmt.Sprintf("phase=%s", phase)
+	}
+	if strings.EqualFold(state, "Ready") {
+		return true, fmt.Sprintf("state=%s", state)
+	}
+
+	conditions, found, _ := unstructured.NestedSlice(disk.Object, "status", "conditions")
+	if found {
+		for _, cond := range conditions {
+			m, ok := cond.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			typ, _, _ := unstructured.NestedString(m, "type")
+			status, _, _ := unstructured.NestedString(m, "status")
+			if strings.EqualFold(typ, "Ready") && strings.EqualFold(status, "True") {
+				return true, "condition Ready=True"
+			}
+			if (strings.EqualFold(typ, "Failed") || strings.EqualFold(typ, "Degraded")) && strings.EqualFold(status, "True") {
+				return false, fmt.Sprintf("condition %s=True", typ)
+			}
+		}
+	}
+
+	if phase != "" {
+		return false, fmt.Sprintf("phase=%s", phase)
+	}
+	if state != "" {
+		return false, fmt.Sprintf("state=%s", state)
+	}
+	return false, "not Ready (missing status.phase/state/conditions)"
+}
+
 func ValidateExistingInstalls(mc *kube.Context) error {
 	_, nsErr := mc.Clientset.CoreV1().Namespaces().Get(mc.Ctx, constants.OpenShiftStorageNS, metav1.GetOptions{})
 	if nsErr != nil {

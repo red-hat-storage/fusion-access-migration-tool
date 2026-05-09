@@ -90,7 +90,7 @@ func main() {
 		{1, "Preflight validations", phases.PreflightValidations},
 		{2, "Prepare Fusion Access for removal", phases.PrepareFusionAccessRemoval},
 		{3, "Uninstall Fusion Access and Scale", phases.UninstallFusionAccessAndScale},
-		{4, "Install Data Foundation", phases.InstallDataFoundation},
+		{4, "Install Fusion Data Foundation", phases.InstallDataFoundation},
 		{5, "Migrate KMM", phases.MigrateKMM},
 		{6, "Finalize storage configuration", phases.FinalizeStorageConfiguration},
 	}

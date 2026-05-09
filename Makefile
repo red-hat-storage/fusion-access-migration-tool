@@ -1,6 +1,10 @@
 # Binary output name (always migrate)
 BINARY_NAME := migrate
 
+# Use checked-in vendor/ so builds work without GOPROXY (air-gapped builders).
+GOFLAGS ?= -mod=vendor
+export GOFLAGS
+
 # Default to the host platform; override for cross-compile, e.g.:
 #   make build GOOS=linux GOARCH=amd64
 #   make build GOOS=linux GOARCH=arm64

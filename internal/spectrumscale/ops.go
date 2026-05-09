@@ -2,6 +2,7 @@
 package spectrumscale
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -350,34 +351,54 @@ func EnableKMMInScaleCluster(mc *kube.Context, secureBoot bool) error {
 
 func VerifyFilesystemRecovery(mc *kube.Context) error {
 	gvr := helpers.ParseGVR(constants.FilesystemResource)
-	fsList, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list filesystems: %w", err)
-	}
+	deadline := time.Now().Add(constants.FilesystemRecoveryWaitTimeout)
+	err := helpers.PollUntil(
+		mc.Ctx,
+		func() (bool, error) {
+			fsList, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
+			if err != nil {
+				return false, fmt.Errorf("failed to list filesystems: %w", err)
+			}
 
-	if len(fsList.Items) == 0 {
-		output.PrintWarning("No filesystems found — manual investigation may be required")
-		return nil
-	}
+			if len(fsList.Items) == 0 {
+				output.PrintInfo(fmt.Sprintf(
+					"Waiting for filesystems to be present in %s... (%s remaining)",
+					constants.SpectrumScaleNS,
+					time.Until(deadline).Round(time.Second),
+				))
+				return false, nil
+			}
 
-	allHealthy := true
-	for _, fs := range fsList.Items {
-		name := fs.GetName()
-		status, _, _ := unstructured.NestedString(fs.Object, "status", "phase")
-		mounted, _, _ := unstructured.NestedBool(fs.Object, "status", "mounted")
-		if status == "" {
-			status = "Unknown"
-		}
-		output.PrintInfo(fmt.Sprintf("Filesystem %s: phase=%s, mounted=%v", name, status, mounted))
-		if !mounted {
-			allHealthy = false
-		}
-	}
+			allHealthy := true
+			for _, fs := range fsList.Items {
+				name := fs.GetName()
+				status, _, _ := unstructured.NestedString(fs.Object, "status", "phase")
+				mounted, _, _ := unstructured.NestedBool(fs.Object, "status", "mounted")
+				if status == "" {
+					status = "Unknown"
+				}
+				output.PrintInfo(fmt.Sprintf("Filesystem %s: phase=%s, mounted=%v", name, status, mounted))
+				if !mounted {
+					allHealthy = false
+				}
+			}
+			if allHealthy {
+				output.PrintSuccess("All filesystems are mounted and functional")
+				return true, nil
+			}
 
-	if !allHealthy {
-		output.PrintWarning("Not all filesystems are mounted — verify manually")
-	} else {
-		output.PrintSuccess("All filesystems are mounted and functional")
+			output.PrintInfo(fmt.Sprintf(
+				"Waiting for all filesystems to be mounted... (%s remaining)",
+				time.Until(deadline).Round(time.Second),
+			))
+			return false, nil
+		},
+		constants.FilesystemRecoveryWaitTimeout,
+		constants.FilesystemRecoveryPollInterval,
+		"all Spectrum Scale filesystems are mounted",
+	)
+	if err != nil && errors.Is(err, helpers.ErrPollDeadline) {
+		return fmt.Errorf("not all filesystems became healthy within %s", constants.FilesystemRecoveryWaitTimeout)
 	}
-	return nil
+	return err
 }
