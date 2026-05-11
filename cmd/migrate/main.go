@@ -45,8 +45,8 @@ func determineStartPhase(dryRun bool, progress state.MigrationProgress) (startPh
 	if dryRun {
 		return 1, false, false
 	}
-	if progress.LastCompletedPhase >= 6 || progress.Status == state.StatusCompleted {
-		return 7, false, true
+	if progress.LastCompletedPhase >= 7 || progress.Status == state.StatusCompleted {
+		return 8, false, true
 	}
 	if progress.LastCompletedPhase > 0 {
 		return progress.LastCompletedPhase + 1, true, false
@@ -76,6 +76,7 @@ func main() {
 	mc.StateConfigMapName = cfg.StateConfigMapName
 	mc.StateConfigMapNamespace = cfg.StateConfigMapNamespace
 	mc.FDFCatalogImage = cfg.FDFCatalogImage
+	mc.FusionOperatorCatalogImage = cfg.FusionOperatorCatalogImage
 
 	progress, err := state.ReadMigrationProgress(mc)
 	if err != nil {
@@ -93,6 +94,7 @@ func main() {
 		{4, "Install Fusion Data Foundation", phases.InstallDataFoundation},
 		{5, "Migrate KMM", phases.MigrateKMM},
 		{6, "Finalize storage configuration", phases.FinalizeStorageConfiguration},
+		{7, "Install Fusion Operator", phases.InstallFusionOperator},
 	}
 
 	startPhase, resumingFromCheckpoint, alreadyComplete := determineStartPhase(cfg.DryRun, progress)

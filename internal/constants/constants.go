@@ -17,6 +17,16 @@ const (
 	OpenShiftStorageNS                 = "openshift-storage"
 	OpenShiftStorageOperatorGroupName  = "fdf-operator-group"
 	OpenShiftMarketplaceNS             = "openshift-marketplace"
+	// FusionOperatorNS is the namespace for IBM Spectrum Fusion Operator (isf-operator Subscription).
+	FusionOperatorNS = "ibm-spectrum-fusion-ns"
+	// FusionOperatorGroupName is the OperatorGroup for Fusion Operator in FusionOperatorNS.
+	FusionOperatorGroupName = "isf-og"
+	// FusionOperatorCatalogSourceName is the CatalogSource for IBM Operator Catalog in openshift-marketplace.
+	FusionOperatorCatalogSourceName = "ibm-operator-catalog"
+	// FusionOperatorSubscriptionName is the Subscription for isf-operator in FusionOperatorNS.
+	FusionOperatorSubscriptionName = "isf-operator"
+	// FusionOperatorSubscriptionChannel is the OLM channel for isf-operator.
+	FusionOperatorSubscriptionChannel = "v2.0"
 	// FDFCatalogSourceName is the CatalogSource name for IBM Spectrum Fusion Data Foundation in openshift-marketplace.
 	FDFCatalogSourceName = "isf-data-foundation-catalog"
 

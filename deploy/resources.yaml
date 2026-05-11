@@ -14,6 +14,11 @@ metadata:
   name: openshift-storage
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: ibm-spectrum-fusion-ns
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: fusion-access-migration
@@ -184,6 +189,20 @@ kind: RoleBinding
 metadata:
   name: fusion-access-migration-rw
   namespace: openshift-marketplace
+subjects:
+  - kind: ServiceAccount
+    name: fusion-access-migration
+    namespace: fusion-access-migration
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fusion-access-migration-namespaced
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fusion-access-migration-rw
+  namespace: ibm-spectrum-fusion-ns
 subjects:
   - kind: ServiceAccount
     name: fusion-access-migration

@@ -34,10 +34,10 @@ func defaultProgress() MigrationProgress {
 }
 
 func validateProgress(progress MigrationProgress) error {
-	if progress.LastCompletedPhase < 0 || progress.LastCompletedPhase > 6 {
+	if progress.LastCompletedPhase < 0 || progress.LastCompletedPhase > 7 {
 		return fmt.Errorf("invalid lastCompletedPhase %d", progress.LastCompletedPhase)
 	}
-	if progress.FailedPhase < 0 || progress.FailedPhase > 6 {
+	if progress.FailedPhase < 0 || progress.FailedPhase > 7 {
 		return fmt.Errorf("invalid failedPhase %d", progress.FailedPhase)
 	}
 	switch progress.Status {
@@ -157,7 +157,7 @@ func WriteMigrationProgress(mc *kube.Context, progress MigrationProgress) error 
 }
 
 func MarkMigrationCompleted(mc *kube.Context, progress MigrationProgress) error {
-	progress.LastCompletedPhase = 6
+	progress.LastCompletedPhase = 7
 	progress.Status = StatusCompleted
 	progress.FailedPhase = 0
 	progress.FailureReason = ""

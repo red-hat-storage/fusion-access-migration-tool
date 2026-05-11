@@ -8,25 +8,28 @@ import (
 )
 
 const (
-	envDryRun                  = "MIGRATION_DRY_RUN"
-	envStateConfigMapName      = "MIGRATION_STATE_CONFIGMAP_NAME"
-	envStateConfigMapNamespace = "MIGRATION_STATE_CONFIGMAP_NAMESPACE"
-	envFDFCatalogImage         = "FDF_CATALOG_IMAGE"
+	envDryRun                     = "MIGRATION_DRY_RUN"
+	envStateConfigMapName         = "MIGRATION_STATE_CONFIGMAP_NAME"
+	envStateConfigMapNamespace    = "MIGRATION_STATE_CONFIGMAP_NAMESPACE"
+	envFDFCatalogImage            = "FDF_CATALOG_IMAGE"
+	envFusionOperatorCatalogImage = "FUSION_OPERATOR_CATALOG_IMAGE"
 )
 
 type envConfig struct {
-	DryRun                  bool
-	StateConfigMapName      string
-	StateConfigMapNamespace string
-	FDFCatalogImage         string
+	DryRun                     bool
+	StateConfigMapName         string
+	StateConfigMapNamespace    string
+	FDFCatalogImage            string
+	FusionOperatorCatalogImage string
 }
 
 func loadEnvConfig() (*envConfig, error) {
 	cfg := &envConfig{
-		DryRun:                  false,
-		StateConfigMapName:      strings.TrimSpace(os.Getenv(envStateConfigMapName)),
-		StateConfigMapNamespace: strings.TrimSpace(os.Getenv(envStateConfigMapNamespace)),
-		FDFCatalogImage:         strings.TrimSpace(os.Getenv(envFDFCatalogImage)),
+		DryRun:                     false,
+		StateConfigMapName:         strings.TrimSpace(os.Getenv(envStateConfigMapName)),
+		StateConfigMapNamespace:    strings.TrimSpace(os.Getenv(envStateConfigMapNamespace)),
+		FDFCatalogImage:            strings.TrimSpace(os.Getenv(envFDFCatalogImage)),
+		FusionOperatorCatalogImage: strings.TrimSpace(os.Getenv(envFusionOperatorCatalogImage)),
 	}
 
 	if dryRunRaw, ok := os.LookupEnv(envDryRun); ok && strings.TrimSpace(dryRunRaw) != "" {
@@ -46,6 +49,9 @@ func loadEnvConfig() (*envConfig, error) {
 
 	if !cfg.DryRun && cfg.FDFCatalogImage == "" {
 		return nil, fmt.Errorf("%s is required when not in dry-run mode", envFDFCatalogImage)
+	}
+	if !cfg.DryRun && cfg.FusionOperatorCatalogImage == "" {
+		return nil, fmt.Errorf("%s is required when not in dry-run mode", envFusionOperatorCatalogImage)
 	}
 
 	return cfg, nil
