@@ -372,13 +372,9 @@ func VerifyFilesystemRecovery(mc *kube.Context) error {
 			allHealthy := true
 			for _, fs := range fsList.Items {
 				name := fs.GetName()
-				status, _, _ := unstructured.NestedString(fs.Object, "status", "phase")
-				mounted, _, _ := unstructured.NestedBool(fs.Object, "status", "mounted")
-				if status == "" {
-					status = "Unknown"
-				}
-				output.PrintInfo(fmt.Sprintf("Filesystem %s: phase=%s, mounted=%v", name, status, mounted))
-				if !mounted {
+				ok, detail := helpers.ScaleFilesystemReportsHealthy(&fs)
+				output.PrintInfo(fmt.Sprintf("Filesystem %s: %s", name, detail))
+				if !ok {
 					allHealthy = false
 				}
 			}
