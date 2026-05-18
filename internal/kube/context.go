@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -27,6 +28,9 @@ type Context struct {
 	StateConfigMapName         string
 	// SecureBootClusterForKMM is set during phase 3 (UninstallFusionAccessAndScale) from CopySecureBootSigningSecretsIfPresent; used by MigrateKMM for EnableKMMInScaleCluster.
 	SecureBootClusterForKMM bool
+	// FusionOperatorCSVWaitTimeout and FusionOperatorCSVWaitPollInterval override CSV wait behavior when both are > 0 (tests only).
+	FusionOperatorCSVWaitTimeout      time.Duration
+	FusionOperatorCSVWaitPollInterval time.Duration
 }
 
 // NewInClusterContext builds clients from in-cluster service account configuration.

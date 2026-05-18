@@ -25,6 +25,8 @@ const (
 	FusionOperatorCatalogSourceName = "ibm-operator-catalog"
 	// FusionOperatorSubscriptionName is the Subscription for isf-operator in FusionOperatorNS.
 	FusionOperatorSubscriptionName = "isf-operator"
+	// FusionOperatorCSVNamePrefix is the CSV name prefix OLM uses for the isf-operator package (e.g. isf-operator.v2.0.0).
+	FusionOperatorCSVNamePrefix = "isf-operator."
 	// FusionOperatorSubscriptionChannel is the OLM channel for isf-operator.
 	FusionOperatorSubscriptionChannel = "v2.0"
 	// FDFCatalogSourceName is the CatalogSource name for IBM Spectrum Fusion Data Foundation in openshift-marketplace.
@@ -80,6 +82,9 @@ const (
 	// FDFCatalogSourceReady* — wait for isf-data-foundation-catalog CatalogSource gRPC ready after create/update.
 	FDFCatalogSourceReadyTimeout      = 10 * time.Minute
 	FDFCatalogSourceReadyPollInterval = 1 * time.Minute
+	// FusionOperatorCSVWait* — wait for isf-operator Subscription CSV to reach Succeeded after Fusion Operator install.
+	FusionOperatorCSVWaitTimeout      = 15 * time.Minute
+	FusionOperatorCSVWaitPollInterval = 15 * time.Second
 )
 
 var (
