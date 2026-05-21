@@ -80,7 +80,7 @@ func TestMarkMigrationFailedAndCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read after completed mark failed: %v", err)
 	}
-	if completed.Status != StatusCompleted || completed.LastCompletedPhase != 6 {
+	if completed.Status != StatusCompleted || completed.LastCompletedPhase != 7 {
 		t.Fatalf("unexpected completed state: %+v", completed)
 	}
 }

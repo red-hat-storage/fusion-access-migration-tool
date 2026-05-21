@@ -45,8 +45,8 @@ jobs:
       - name: Build
         run: go build -o /tmp/migrate ./cmd/migrate
 
-      - name: Test
-        run: go test ./...
+      - name: Test (make test)
+        run: make test
 
   image:
     needs: build

@@ -30,3 +30,5 @@ spec:
               value: "fusion-access-migration-state"
             - name: FDF_CATALOG_IMAGE
               value: "cp.stg.icr.io/cp/df/isf-data-foundation-catalog:4.21.3-2"
+            - name: FUSION_OPERATOR_CATALOG_IMAGE
+              value: "icr.io/cpopen/ibm-operator-catalog:latest"

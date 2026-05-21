@@ -87,6 +87,7 @@ kubectl logs -n fusion-access-migration job/fusion-access-migration -f
 | `MIGRATION_STATE_CONFIGMAP_NAMESPACE` | Yes | Namespace of the progress ConfigMap. |
 | `MIGRATION_STATE_CONFIGMAP_NAME` | Yes | Name of the progress ConfigMap used for phase checkpointing. |
 | `FDF_CATALOG_IMAGE` | Yes (unless dry-run) | Container image for the `isf-data-foundation-catalog` CatalogSource applied before FDF install. |
+| `FUSION_OPERATOR_CATALOG_IMAGE` | Yes (unless dry-run) | Container image for the `ibm-operator-catalog` CatalogSource used when installing Fusion Operator (phase 7). |
 
 ### Checkpoint and restart behavior
 

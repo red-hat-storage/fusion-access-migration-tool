@@ -83,6 +83,24 @@ func TestValidateScaleFilesystemHealthIfPresent(t *testing.T) {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
+
+	t.Run("passes when filesystem uses status conditions Healthy instead of mounted", func(t *testing.T) {
+		mc := newValidationTestContext(filesystemWithHealthyConditions("sharedfs", true))
+		if err := ValidateScaleFilesystemHealthIfPresent(mc); err != nil {
+			t.Fatalf("expected success, got error: %v", err)
+		}
+	})
+
+	t.Run("fails when Healthy condition is false", func(t *testing.T) {
+		mc := newValidationTestContext(filesystemWithHealthyConditions("sharedfs", false))
+		err := ValidateScaleFilesystemHealthIfPresent(mc)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "sharedfs") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestValidateLocalDisksReadyIfPresent(t *testing.T) {
@@ -190,6 +208,29 @@ func filesystem(name string, phase string, mounted bool) *unstructured.Unstructu
 			"status": map[string]interface{}{
 				"phase":   phase,
 				"mounted": mounted,
+			},
+		},
+	}
+}
+
+func filesystemWithHealthyConditions(name string, healthyTrue bool) *unstructured.Unstructured {
+	healthyStatus := "False"
+	if healthyTrue {
+		healthyStatus = "True"
+	}
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "scale.spectrum.ibm.com/v1beta1",
+			"kind":       "Filesystem",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": constants.SpectrumScaleNS,
+			},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "Success", "status": "True", "reason": "Created"},
+					map[string]interface{}{"type": "Healthy", "status": healthyStatus, "reason": "Healthy"},
+				},
 			},
 		},
 	}

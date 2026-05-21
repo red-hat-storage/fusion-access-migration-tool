@@ -25,7 +25,7 @@ RESOURCES_MANIFEST ?= deploy/resources.yaml
 JOB_MANIFEST ?= deploy/migration-job.yaml
 JOB_CONTAINER ?= migrate
 
-.PHONY: build clean help fmt vet lint check image image-push image-buildx job-image-manifest
+.PHONY: build clean help fmt vet lint check test vendor image image-push image-buildx job-image-manifest
 
 ## build: compile $(BINARY_NAME) for GOOS/GOARCH (defaults to this machine)
 build:
@@ -45,6 +45,14 @@ lint:
 
 ## check: vet then lint
 check: vet lint
+
+## test: run all unit tests
+test:
+	go test ./...
+
+## vendor: refresh vendor/ from go.mod (clears GOFLAGS so modules can resolve when online)
+vendor:
+	env GOFLAGS= go mod vendor
 
 ## image: build container image with Dockerfile
 image:
@@ -91,6 +99,8 @@ help:
 	@echo "  make vet                go vet ./..."
 	@echo "  make lint               staticcheck ./... (see go.mod tool honnef.co/go/tools/cmd/staticcheck)"
 	@echo "  make check              vet + lint"
+	@echo "  make test               go test ./..."
+	@echo "  make vendor             go mod vendor (update vendor/ after go.mod changes)"
 	@echo "  make image              Build container image $(IMAGE_REF)"
 	@echo "  make image-push         Push container image $(IMAGE_REF)"
 	@echo "  make image-buildx       Build and push multi-arch image $(IMAGE_REF) (PLATFORMS=$(PLATFORMS))"

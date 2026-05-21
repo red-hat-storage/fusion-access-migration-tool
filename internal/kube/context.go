@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -20,11 +21,16 @@ type Context struct {
 	// It is not a CLI flag: it enables relaxed checks (e.g. existing SAN StorageClasses, FDF 4.21.x after install) when preflight is skipped.
 	ResumingFromCheckpoint bool
 	// FDFCatalogImage is the container image for the isf-data-foundation-catalog CatalogSource (FDF_CATALOG_IMAGE).
-	FDFCatalogImage         string
-	StateConfigMapNamespace string
-	StateConfigMapName      string
+	FDFCatalogImage string
+	// FusionOperatorCatalogImage is the container image for the ibm-operator-catalog CatalogSource (FUSION_OPERATOR_CATALOG_IMAGE).
+	FusionOperatorCatalogImage string
+	StateConfigMapNamespace    string
+	StateConfigMapName         string
 	// SecureBootClusterForKMM is set during phase 3 (UninstallFusionAccessAndScale) from CopySecureBootSigningSecretsIfPresent; used by MigrateKMM for EnableKMMInScaleCluster.
 	SecureBootClusterForKMM bool
+	// FusionOperatorCSVWaitTimeout and FusionOperatorCSVWaitPollInterval override CSV wait behavior when both are > 0 (tests only).
+	FusionOperatorCSVWaitTimeout      time.Duration
+	FusionOperatorCSVWaitPollInterval time.Duration
 }
 
 // NewInClusterContext builds clients from in-cluster service account configuration.

@@ -132,12 +132,12 @@ func ValidateScaleClusterExists(mc *kube.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve Scale cluster API: %w", err)
 	}
-	clusterList, err := mc.Dynamic.Resource(clusterGVR).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{})
+	clusterList, err := mc.Dynamic.Resource(clusterGVR).List(mc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list Scale clusters: %w", err)
 	}
 	if len(clusterList.Items) == 0 {
-		return fmt.Errorf("no Scale clusters found in namespace %s", constants.SpectrumScaleNS)
+		return fmt.Errorf("no Scale clusters found (clusters.scale.spectrum.ibm.com)")
 	}
 
 	output.PrintSuccess(fmt.Sprintf("Scale cluster exists (%d found)", len(clusterList.Items)))
@@ -158,14 +158,10 @@ func ValidateScaleFilesystemHealthIfPresent(mc *kube.Context) error {
 	var unhealthy []string
 	for _, fs := range fsList.Items {
 		name := fs.GetName()
-		phase, _, _ := unstructured.NestedString(fs.Object, "status", "phase")
-		mounted, _, _ := unstructured.NestedBool(fs.Object, "status", "mounted")
-		if phase == "" {
-			phase = "Unknown"
-		}
-		output.PrintInfo(fmt.Sprintf("Filesystem %s: phase=%s, mounted=%v", name, phase, mounted))
-		if !mounted {
-			unhealthy = append(unhealthy, fmt.Sprintf("%s (phase=%s, mounted=%v)", name, phase, mounted))
+		ok, detail := helpers.ScaleFilesystemReportsHealthy(&fs)
+		output.PrintInfo(fmt.Sprintf("Filesystem %s: %s", name, detail))
+		if !ok {
+			unhealthy = append(unhealthy, fmt.Sprintf("%s (%s)", name, detail))
 		}
 	}
 	if len(unhealthy) > 0 {
