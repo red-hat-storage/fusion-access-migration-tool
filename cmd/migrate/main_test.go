@@ -38,12 +38,34 @@ func TestDetermineStartPhase(t *testing.T) {
 			name:   "completed migration exits early",
 			dryRun: false,
 			progress: state.MigrationProgress{
+				LastCompletedPhase: 7,
+				Status:             state.StatusCompleted,
+			},
+			wantStartPhase:             8,
+			wantResumingFromCheckpoint: false,
+			wantComplete:               true,
+		},
+		{
+			name:   "legacy completed migration with phase 6 exits early",
+			dryRun: false,
+			progress: state.MigrationProgress{
 				LastCompletedPhase: 6,
 				Status:             state.StatusCompleted,
 			},
-			wantStartPhase:             7,
+			wantStartPhase:             8,
 			wantResumingFromCheckpoint: false,
 			wantComplete:               true,
+		},
+		{
+			name:   "resume after finalize storage runs Fusion Operator phase",
+			dryRun: false,
+			progress: state.MigrationProgress{
+				LastCompletedPhase: 6,
+				Status:             state.StatusInProgress,
+			},
+			wantStartPhase:             7,
+			wantResumingFromCheckpoint: true,
+			wantComplete:               false,
 		},
 		{
 			name:   "dry run always starts from phase 1",

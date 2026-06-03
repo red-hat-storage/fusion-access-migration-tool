@@ -15,8 +15,20 @@ const (
 	KmmOperatorGroupName               = "openshift-kmm-operatorgroup"
 	UserWorkloadMonitoringNS           = "openshift-user-workload-monitoring"
 	OpenShiftStorageNS                 = "openshift-storage"
-	OpenShiftStorageOperatorGroupName  = "odf-operator-group"
+	OpenShiftStorageOperatorGroupName  = "fdf-operator-group"
 	OpenShiftMarketplaceNS             = "openshift-marketplace"
+	// FusionOperatorNS is the namespace for IBM Spectrum Fusion Operator (isf-operator Subscription).
+	FusionOperatorNS = "ibm-spectrum-fusion-ns"
+	// FusionOperatorGroupName is the OperatorGroup for Fusion Operator in FusionOperatorNS.
+	FusionOperatorGroupName = "isf-og"
+	// FusionOperatorCatalogSourceName is the CatalogSource for IBM Operator Catalog in openshift-marketplace.
+	FusionOperatorCatalogSourceName = "ibm-operator-catalog"
+	// FusionOperatorSubscriptionName is the Subscription for isf-operator in FusionOperatorNS.
+	FusionOperatorSubscriptionName = "isf-operator"
+	// FusionOperatorCSVNamePrefix is the CSV name prefix OLM uses for the isf-operator package (e.g. isf-operator.v2.0.0).
+	FusionOperatorCSVNamePrefix = "isf-operator."
+	// FusionOperatorSubscriptionChannel is the OLM channel for isf-operator.
+	FusionOperatorSubscriptionChannel = "v2.0"
 	// FDFCatalogSourceName is the CatalogSource name for IBM Spectrum Fusion Data Foundation in openshift-marketplace.
 	FDFCatalogSourceName = "isf-data-foundation-catalog"
 
@@ -64,9 +76,15 @@ const (
 	// KmmModuleNodesMatching* — wait for status.moduleLoader.nodesMatchingSelectorNumber to become 0 after Scale cluster enables KMM.
 	KmmModuleNodesMatchingWaitTimeout  = 30 * time.Minute
 	KmmModuleNodesMatchingPollInterval = 5 * time.Second
+	// FilesystemRecoveryWait* — wait for Spectrum Scale filesystems to report mounted=true during finalization.
+	FilesystemRecoveryWaitTimeout  = 10 * time.Minute
+	FilesystemRecoveryPollInterval = 30 * time.Second
 	// FDFCatalogSourceReady* — wait for isf-data-foundation-catalog CatalogSource gRPC ready after create/update.
 	FDFCatalogSourceReadyTimeout      = 10 * time.Minute
 	FDFCatalogSourceReadyPollInterval = 1 * time.Minute
+	// FusionOperatorCSVWait* — wait for isf-operator Subscription CSV to reach Succeeded after Fusion Operator install.
+	FusionOperatorCSVWaitTimeout      = 15 * time.Minute
+	FusionOperatorCSVWaitPollInterval = 15 * time.Second
 )
 
 var (
