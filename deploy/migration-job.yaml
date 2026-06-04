@@ -17,7 +17,8 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: quay.io/ocs-dev/fusion-access-migration-tool:latest
+          image: registry.redhat.io/odf4/odf-cli-rhel9:v4.22
+          command: ["/usr/bin/migrate"]
           imagePullPolicy: Always
           env:
             - name: MIGRATION_DRY_RUN
@@ -29,6 +30,6 @@ spec:
             - name: MIGRATION_STATE_CONFIGMAP_NAME
               value: "fusion-access-migration-state"
             - name: FDF_CATALOG_IMAGE
-              value: "cp.stg.icr.io/cp/df/isf-data-foundation-catalog:4.21.3-2"
+              value: "icr.io/cpopen/isf-data-foundation-catalog:v4.21"
             - name: FUSION_OPERATOR_CATALOG_IMAGE
               value: "icr.io/cpopen/ibm-operator-catalog:latest"
