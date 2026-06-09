@@ -103,13 +103,17 @@ func ensureOpenShiftStorageOperatorGroup(mc *kube.Context) error {
 func WaitForFDFAndSpectrumScaleOperatorCSVs(mc *kube.Context) error {
 	if mc.DryRun {
 		output.PrintDryRun(fmt.Sprintf(
-			"Would wait for FDF odf-operator CSV Succeeded in %s, then CSV with prefix %q in %s Succeeded",
-			constants.OpenShiftStorageNS, constants.SpectrumScaleOperatorCSVNamePrefix, constants.SpectrumScaleNS,
+			"Would wait for FDF odf-operator CSV Succeeded in %s, enable Console plugin %q, then CSV with prefix %q in %s Succeeded",
+			constants.OpenShiftStorageNS, constants.OdfConsolePlugin,
+			constants.SpectrumScaleOperatorCSVNamePrefix, constants.SpectrumScaleNS,
 		))
 		return nil
 	}
 	if err := waitForFDFSubscriptionCSVSucceeded(mc, constants.OdfOperatorSubPrefix); err != nil {
 		return err
+	}
+	if err := cluster.EnableOdfConsolePlugin(mc); err != nil {
+		return fmt.Errorf("failed to enable ODF console plugin: %w", err)
 	}
 	return WaitForSpectrumScaleOperatorCSVAfterFDF(mc)
 }
