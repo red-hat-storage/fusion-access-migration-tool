@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/red-hat-storage/fusion-access-migration-tool/internal/constants"
 	"github.com/red-hat-storage/fusion-access-migration-tool/internal/helpers"
 	"github.com/red-hat-storage/fusion-access-migration-tool/internal/kube"
 
@@ -23,6 +24,24 @@ func resolveScaleClusterGVR(mc *kube.Context) (schema.GroupVersionResource, erro
 			"scale.spectrum.ibm.com Cluster API not found (cluster-scoped); tried v1 and v1beta1: %w", err)
 	}
 	return gvr, nil
+}
+
+// resolveScaleDaemonGVR probes namespaced (ibm-spectrum-scale) because daemons is
+// namespace-scoped and the service account only has namespaced RBAC.
+func resolveScaleDaemonGVR(mc *kube.Context) (schema.GroupVersionResource, error) {
+	for _, ver := range []string{"v1", "v1beta1"} {
+		gvr := schema.GroupVersionResource{Group: "scale.spectrum.ibm.com", Version: ver, Resource: "daemons"}
+		_, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{Limit: 1})
+		if err == nil {
+			return gvr, nil
+		}
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		return schema.GroupVersionResource{}, err
+	}
+	return schema.GroupVersionResource{}, fmt.Errorf(
+		"scale.spectrum.ibm.com Daemon API not found in %s; tried v1 and v1beta1", constants.SpectrumScaleNS)
 }
 
 func formatOwnerRefsForLog(refs []metav1.OwnerReference) string {
