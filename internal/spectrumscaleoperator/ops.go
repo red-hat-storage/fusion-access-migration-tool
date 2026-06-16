@@ -114,6 +114,60 @@ func WaitForFDFAndSpectrumScaleOperatorCSVs(mc *kube.Context) error {
 	return WaitForSpectrumScaleOperatorCSVAfterFDF(mc)
 }
 
+func ensureSpectrumScaleOperatorCSVReplicas(mc *kube.Context, csv *unstructured.Unstructured) error {
+	csvName := csv.GetName()
+	deployments, found, _ := unstructured.NestedSlice(csv.Object, "spec", "install", "spec", "deployments")
+	if !found || len(deployments) == 0 {
+		return fmt.Errorf("no deployments in CSV %s spec.install.spec.deployments", csvName)
+	}
+
+	needsUpdate := false
+	for j, dep := range deployments {
+		depMap, ok := dep.(map[string]any)
+		if !ok {
+			continue
+		}
+		replicas, replicasFound, err := unstructured.NestedInt64(depMap, "spec", "replicas")
+		if err != nil {
+			return fmt.Errorf("failed to read replicas in CSV %s deployment: %w", csvName, err)
+		}
+		name, _, _ := unstructured.NestedString(depMap, "name")
+		if !replicasFound {
+			return fmt.Errorf("deployment %q in CSV %s has no spec.replicas", name, csvName)
+		}
+		if replicas > 0 {
+			continue
+		}
+		needsUpdate = true
+		if mc.DryRun {
+			continue
+		}
+		if err := unstructured.SetNestedField(depMap, int64(1), "spec", "replicas"); err != nil {
+			return fmt.Errorf("failed to set replicas in CSV deployment: %w", err)
+		}
+		deployments[j] = depMap
+	}
+
+	if !needsUpdate {
+		output.PrintSkip(fmt.Sprintf("Operator deployments already running in CSV %s", csvName))
+		return nil
+	}
+
+	if mc.DryRun {
+		output.PrintDryRun(fmt.Sprintf("Would scale operator deployment(s) in CSV %s to 1 replica", csvName))
+		return nil
+	}
+
+	if err := unstructured.SetNestedSlice(csv.Object, deployments, "spec", "install", "spec", "deployments"); err != nil {
+		return fmt.Errorf("failed to update deployments in CSV %s: %w", csvName, err)
+	}
+	if _, err := mc.Dynamic.Resource(constants.CsvGVR).Namespace(constants.SpectrumScaleNS).Update(mc.Ctx, csv, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update CSV %s: %w", csvName, err)
+	}
+	output.PrintSuccess(fmt.Sprintf("Scaled up operator in CSV %s", csvName))
+	return nil
+}
+
 func waitForFDFSubscriptionCSVSucceeded(mc *kube.Context, subName string) error {
 	output.PrintInfo("Waiting for FDF CSV to reach Succeeded phase (up to 10 minutes)...")
 
@@ -340,6 +394,9 @@ func WaitForSpectrumScaleOperatorCSVAfterFDF(mc *kube.Context) error {
 			}
 			phase := helpers.CSVStatusPhase(item)
 			if phase == "Succeeded" {
+				if err := ensureSpectrumScaleOperatorCSVReplicas(mc, item); err != nil {
+					return false, err
+				}
 				output.PrintSuccess(fmt.Sprintf(
 					"Spectrum Scale operator CSV %s is ready in %s (phase Succeeded)",
 					name, constants.SpectrumScaleNS,
