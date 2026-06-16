@@ -45,6 +45,8 @@ const (
 	SecureBootSigningKeySecret    = "secureboot-signing-key"
 	SecureBootSigningKeyPubSecret = "secureboot-signing-key-pub"
 	OdfOperatorSubPrefix          = "odf-operator"
+	OdfConsolePlugin              = "odf-console"
+	ConsoleClusterName            = "cluster"
 	OdfProviderRedHat             = "Red Hat"
 	OdfProviderIBM                = "IBM"
 
@@ -108,5 +110,8 @@ var (
 	}
 	KmmModuleGVR = schema.GroupVersionResource{
 		Group: "kmm.sigs.x-k8s.io", Version: "v1beta1", Resource: "modules",
+	}
+	ConsoleGVR = schema.GroupVersionResource{
+		Group: "operator.openshift.io", Version: "v1", Resource: "consoles",
 	}
 )
