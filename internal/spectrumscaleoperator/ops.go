@@ -57,13 +57,24 @@ func ScaleDownSpectrumScaleOperator(mc *kube.Context) error {
 
 func ensureOpenShiftStorageOperatorGroup(mc *kube.Context) error {
 	ogRes := mc.Dynamic.Resource(constants.OperatorGroupGVR).Namespace(constants.OpenShiftStorageNS)
-	_, err := ogRes.Get(mc.Ctx, constants.OpenShiftStorageOperatorGroupName, metav1.GetOptions{})
-	if err == nil {
-		output.PrintSkip(fmt.Sprintf("OperatorGroup %s already exists in %s", constants.OpenShiftStorageOperatorGroupName, constants.OpenShiftStorageNS))
-		return nil
+
+	list, err := ogRes.List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list OperatorGroups in %s: %w", constants.OpenShiftStorageNS, err)
 	}
-	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get OperatorGroup %s in %s: %w", constants.OpenShiftStorageOperatorGroupName, constants.OpenShiftStorageNS, err)
+	for i := range list.Items {
+		og := &list.Items[i]
+		ok, err := cluster.OperatorGroupTargetsNamespace(og, constants.OpenShiftStorageNS)
+		if err != nil {
+			return err
+		}
+		if ok {
+			output.PrintSkip(fmt.Sprintf(
+				"OperatorGroup %q in %s already targets namespace %s; skipping create of %s",
+				og.GetName(), constants.OpenShiftStorageNS, constants.OpenShiftStorageNS, constants.OpenShiftStorageOperatorGroupName,
+			))
+			return nil
+		}
 	}
 
 	og := &unstructured.Unstructured{
@@ -280,8 +291,171 @@ func ibmCsvMinorFromSubscription(mc *kube.Context, sub *unstructured.Unstructure
 	return minor, true, nil
 }
 
+// odfSubscriptionProvider returns the CSV provider and minor version for the odf-operator subscription.
+func odfSubscriptionProvider(mc *kube.Context, sub *unstructured.Unstructured) (provider string, minor uint64, err error) {
+	csvName, haveCSV := helpers.SubscriptionCurrentCSV(sub)
+	if !haveCSV {
+		return "", 0, nil
+	}
+	csv, err := helpers.GetClusterServiceVersion(mc.Ctx, mc.Dynamic, constants.OpenShiftStorageNS, csvName)
+	if err != nil {
+		return "", 0, err
+	}
+	provider = helpers.CSVSpecProviderName(csv)
+	specVersion := helpers.CSVSpecVersion(csv)
+	_, minor, err = cluster.ParseFdfMajorMinor(specVersion)
+	if err != nil {
+		return provider, 0, err
+	}
+	return provider, minor, nil
+}
+
+// applyFdfCatalogAndChannelToSubscription updates a subscription's catalog source and channel to target FDF.
+// The channel is set to OdfSubscriptionChannel (stable-4.21). The catalog source is set to FDFCatalogSourceName.
+func applyFdfCatalogAndChannelToSubscription(dst *unstructured.Unstructured) {
+	_ = unstructured.SetNestedField(dst.Object, constants.OdfSubscriptionChannel, "spec", "channel")
+	_ = unstructured.SetNestedField(dst.Object, constants.FDFCatalogSourceName, "spec", "source")
+	_ = unstructured.SetNestedField(dst.Object, constants.OpenShiftMarketplaceNS, "spec", "sourceNamespace")
+}
+
+// reconcileAllOdfSubscriptions updates catalog source and channel for all subscriptions in openshift-storage
+// to point at the FDF catalog. This is used when migrating from Red Hat ODF to IBM FDF.
+func reconcileAllOdfSubscriptions(mc *kube.Context) error {
+	subRes := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS)
+	subs, err := subRes.List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list subscriptions in %s: %w", constants.OpenShiftStorageNS, err)
+	}
+
+	if len(subs.Items) == 0 {
+		output.PrintInfo(fmt.Sprintf("No subscriptions found in %s", constants.OpenShiftStorageNS))
+		return nil
+	}
+
+	for i := range subs.Items {
+		sub := &subs.Items[i]
+		name := sub.GetName()
+
+		src, _, _ := unstructured.NestedString(sub.Object, "spec", "source")
+		ch, _, _ := unstructured.NestedString(sub.Object, "spec", "channel")
+
+		if src == constants.FDFCatalogSourceName &&
+			ch == constants.OdfSubscriptionChannel {
+			output.PrintSkip(fmt.Sprintf("Subscription %q already points to FDF catalog and channel", name))
+			continue
+		}
+
+		if mc.DryRun {
+			output.PrintDryRun(fmt.Sprintf(
+				"Would update Subscription %q (source=%s→%s, channel=%s→%s)",
+				name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
+			))
+			continue
+		}
+
+		output.PrintInfo(fmt.Sprintf(
+			"Updating Subscription %q (source=%s→%s, channel=%s→%s)",
+			name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
+		))
+		applyFdfCatalogAndChannelToSubscription(sub)
+		if _, err := subRes.Update(mc.Ctx, sub, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update Subscription %q in %s: %w", name, constants.OpenShiftStorageNS, err)
+		}
+		output.PrintSuccess(fmt.Sprintf("Updated Subscription %q", name))
+	}
+
+	return nil
+}
+
+// waitForManualInstallPlanApproval checks all subscriptions in openshift-storage for Manual installPlanApproval.
+// For each Manual subscription, it waits for the user to approve the InstallPlan before proceeding.
+func waitForManualInstallPlanApproval(mc *kube.Context) error {
+	subRes := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS)
+	subs, err := subRes.List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list subscriptions in %s: %w", constants.OpenShiftStorageNS, err)
+	}
+
+	for i := range subs.Items {
+		sub := &subs.Items[i]
+		name := sub.GetName()
+		ipa := helpers.SubscriptionInstallPlanApproval(sub)
+		if ipa != "Manual" {
+			continue
+		}
+
+		output.PrintWarning(fmt.Sprintf(
+			"Subscription %q has installPlanApproval=Manual; waiting for InstallPlan approval",
+			name,
+		))
+
+		if mc.DryRun {
+			output.PrintDryRun(fmt.Sprintf("Would wait for InstallPlan approval for Subscription %q", name))
+			continue
+		}
+
+		if err := pollInstallPlanApproved(mc, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pollInstallPlanApproved polls until the InstallPlan referenced by the named subscription is approved.
+func pollInstallPlanApproved(mc *kube.Context, subName string) error {
+	subRes := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS)
+	ipRes := mc.Dynamic.Resource(constants.InstallPlanGVR).Namespace(constants.OpenShiftStorageNS)
+	deadline := time.Now().Add(constants.InstallPlanApprovalWaitTimeout)
+
+	return helpers.PollUntil(mc.Ctx, func() (bool, error) {
+		sub, err := subRes.Get(mc.Ctx, subName, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("get Subscription %s/%s: %w", constants.OpenShiftStorageNS, subName, err)
+		}
+
+		ipName, ok := helpers.SubscriptionInstallPlanRef(sub)
+		if !ok {
+			output.PrintInfo(fmt.Sprintf(
+				"Subscription %q has no InstallPlan reference yet… (%s remaining)",
+				subName, time.Until(deadline).Round(time.Second),
+			))
+			return false, nil
+		}
+
+		ip, err := ipRes.Get(mc.Ctx, ipName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				output.PrintInfo(fmt.Sprintf(
+					"InstallPlan %q not found yet… (%s remaining)",
+					ipName, time.Until(deadline).Round(time.Second),
+				))
+				return false, nil
+			}
+			return false, fmt.Errorf("get InstallPlan %s/%s: %w", constants.OpenShiftStorageNS, ipName, err)
+		}
+
+		approved, _, _ := unstructured.NestedBool(ip.Object, "spec", "approved")
+		if approved {
+			output.PrintSuccess(fmt.Sprintf("InstallPlan %q for Subscription %q is approved", ipName, subName))
+			return true, nil
+		}
+
+		output.PrintWarning(fmt.Sprintf(
+			"InstallPlan %q for Subscription %q requires manual approval. "+
+				"Please approve it via: oc patch installplan %s -n %s --type merge -p '{\"spec\":{\"approved\":true}}' (%s remaining)",
+			ipName, subName, ipName, constants.OpenShiftStorageNS,
+			time.Until(deadline).Round(time.Second),
+		))
+		return false, nil
+	}, constants.InstallPlanApprovalWaitTimeout, constants.InstallPlanApprovalPollInterval,
+		fmt.Sprintf("InstallPlan approved for Subscription %s", subName))
+}
+
 // CreateFDFSubscriptionAndWait ensures the OperatorGroup and odf-operator Subscription match the FDF install manifest.
-// If IBM FDF 4.20.x is already installed, it updates channel and catalog source instead of creating the Subscription.
+// It supports three scenarios:
+//   - No odf-operator subscription exists: creates a new FDF subscription.
+//   - Red Hat ODF 4.20/4.21 is installed: migrates all subscriptions in openshift-storage to FDF catalog.
+//   - IBM FDF 4.20 is installed: updates channel and catalog source on odf-operator only.
 func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 	if err := cluster.EnsureNamespace(mc, constants.OpenShiftStorageNS); err != nil {
 		return err
@@ -299,7 +473,7 @@ func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 		constants.FDFCatalogSourceName, constants.OpenShiftMarketplaceNS,
 	))
 
-	_, err := subRes.Get(mc.Ctx, subName, metav1.GetOptions{})
+	existing, err := subRes.Get(mc.Ctx, subName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("get Subscription %s/%s: %w", constants.OpenShiftStorageNS, subName, err)
 	}
@@ -326,7 +500,31 @@ func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 		return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)
 	}
 
+	provider, minor, provErr := odfSubscriptionProvider(mc, existing)
+	if provErr != nil {
+		output.PrintWarning(fmt.Sprintf("Could not determine odf-operator provider: %v; falling back to FDF reconcile path", provErr))
+		return reconcileExistingFdfSubscriptionAndWait(mc, subRes)
+	}
+
+	if provider == constants.OdfProviderRedHat {
+		output.PrintInfo(fmt.Sprintf("Red Hat ODF %d.%d detected — migrating all subscriptions in %s to IBM FDF catalog",
+			constants.RequiredFDFMajor, minor, constants.OpenShiftStorageNS))
+		return reconcileOdfToFdfAndWait(mc)
+	}
+
 	return reconcileExistingFdfSubscriptionAndWait(mc, subRes)
+}
+
+// reconcileOdfToFdfAndWait handles Red Hat ODF -> IBM FDF migration by updating all subscriptions
+// in openshift-storage to point at the FDF catalog, then waiting for CSVs.
+func reconcileOdfToFdfAndWait(mc *kube.Context) error {
+	if err := reconcileAllOdfSubscriptions(mc); err != nil {
+		return err
+	}
+	if err := waitForManualInstallPlanApproval(mc); err != nil {
+		return err
+	}
+	return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)
 }
 
 func reconcileExistingFdfSubscriptionAndWait(mc *kube.Context, subRes dynamic.ResourceInterface) error {
@@ -369,6 +567,10 @@ func reconcileExistingFdfSubscriptionAndWait(mc *kube.Context, subRes dynamic.Re
 		return fmt.Errorf("update FDF subscription %s: %w", subName, err)
 	}
 	output.PrintSuccess(fmt.Sprintf("Updated FDF subscription %s", subName))
+
+	if err := waitForManualInstallPlanApproval(mc); err != nil {
+		return err
+	}
 	return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)
 }
 

@@ -95,6 +95,9 @@ const (
 	// FusionOperatorCSVWait* — wait for isf-operator Subscription CSV to reach Succeeded after Fusion Operator install.
 	FusionOperatorCSVWaitTimeout      = 15 * time.Minute
 	FusionOperatorCSVWaitPollInterval = 15 * time.Second
+	// InstallPlanApproval* — wait for user to approve a Manual InstallPlan after subscription update.
+	InstallPlanApprovalWaitTimeout  = 30 * time.Minute
+	InstallPlanApprovalPollInterval = 30 * time.Second
 )
 
 var (
@@ -121,5 +124,8 @@ var (
 	}
 	OdfManagerGVR = schema.GroupVersionResource{
 		Group: "odf.isf.ibm.com", Version: "v1", Resource: "odfmanagers",
+	}
+	InstallPlanGVR = schema.GroupVersionResource{
+		Group: "operators.coreos.com", Version: "v1alpha1", Resource: "installplans",
 	}
 )
