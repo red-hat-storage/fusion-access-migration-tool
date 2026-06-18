@@ -115,12 +115,12 @@ func TestOperatorGroupTargetsNamespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := operatorGroupTargetsNamespace(tt.og, target)
+			got, err := OperatorGroupTargetsNamespace(tt.og, target)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
-				t.Fatalf("operatorGroupTargetsNamespace = %v, want %v", got, tt.want)
+				t.Fatalf("OperatorGroupTargetsNamespace = %v, want %v", got, tt.want)
 			}
 		})
 	}

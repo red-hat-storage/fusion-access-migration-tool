@@ -338,7 +338,7 @@ func readModuleStatusModuleLoader(obj map[string]interface{}, field string) (n i
 
 // ScaleDaemonNodeSelectorNodeCount reads spec.nodeSelector from the Scale Daemon CR in
 // ibm-spectrum-scale and returns the number of nodes matching that selector.
-// Used as a fallback when the old KMM Module in ibm-fusion-access is already gone (resume).
+// Used to determine the expected nodesMatchingSelectorNumber for the new KMM Module.
 func ScaleDaemonNodeSelectorNodeCount(mc *kube.Context) (int64, error) {
 	gvr, err := resolveScaleDaemonGVR(mc)
 	if err != nil {
@@ -378,7 +378,7 @@ func ScaleDaemonNodeSelectorNodeCount(mc *kube.Context) (int64, error) {
 		return 0, fmt.Errorf("no nodes match Daemon %s/%s spec.nodeSelector %q", constants.SpectrumScaleNS, daemon.GetName(), labelSelector)
 	}
 	output.PrintInfo(fmt.Sprintf(
-		"Daemon %s/%s spec.nodeSelector matches %d node(s) (fallback for missing old KMM Module)",
+		"Daemon %s/%s spec.nodeSelector matches %d node(s)",
 		constants.SpectrumScaleNS, daemon.GetName(), count,
 	))
 	return count, nil

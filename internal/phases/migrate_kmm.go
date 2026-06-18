@@ -15,16 +15,8 @@ import (
 // moves the KMM operator subscription to openshift-kmm, and removes the Fusion Access namespace.
 // Secure boot and IBM entitlement were handled in phase 3 (UninstallFusionAccessAndScale).
 func MigrateKMM(mc *kube.Context) error {
-	kmmModuleNodesMatching, err := spectrumscale.PrintKMMModulesInFusionAccess(mc)
-	if err != nil {
+	if _, err := spectrumscale.PrintKMMModulesInFusionAccess(mc); err != nil {
 		return fmt.Errorf("inspect KMM modules: %w", err)
-	}
-	// If the old KMM Module is gone(incase of tool restart), use the Scale Daemon nodeSelector to get the node count.
-	if kmmModuleNodesMatching == 0 {
-		kmmModuleNodesMatching, err = spectrumscale.ScaleDaemonNodeSelectorNodeCount(mc)
-		if err != nil {
-			return fmt.Errorf("failed to get Scale Daemon node count: %w", err)
-		}
 	}
 	if err := spectrumscale.EnableKMMInScaleCluster(mc, mc.SecureBootClusterForKMM); err != nil {
 		return fmt.Errorf("enable KMM in Scale Cluster: %w", err)
@@ -34,6 +26,10 @@ func MigrateKMM(mc *kube.Context) error {
 	}
 	if err := spectrumscale.DeleteFusionAccessKMMModuleStripFinalizers(mc); err != nil {
 		return fmt.Errorf("delete Fusion Access KMM Module: %w", err)
+	}
+	kmmModuleNodesMatching, err := spectrumscale.ScaleDaemonNodeSelectorNodeCount(mc)
+	if err != nil {
+		return fmt.Errorf("failed to get Scale Daemon node count: %w", err)
 	}
 	if err := spectrumscale.WaitForKMMModuleNodesMatching(mc, constants.SpectrumScaleNS, kmmModuleNodesMatching); err != nil {
 		return fmt.Errorf("error waiting for KMM Module in namespace %s: %w", constants.SpectrumScaleNS, err)
