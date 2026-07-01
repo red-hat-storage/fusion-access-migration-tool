@@ -75,9 +75,12 @@ const (
 	// KmmModuleDelete* — wait for each modules.kmm object to disappear after Delete (namespace delete is blocked until gone).
 	KmmModuleDeleteWaitTimeout  = 15 * time.Minute
 	KmmModuleDeletePollInterval = 5 * time.Second
-	// KmmModuleNodesMatching* — wait for status.moduleLoader.nodesMatchingSelectorNumber to become 0 after Scale cluster enables KMM.
-	KmmModuleNodesMatchingWaitTimeout  = 30 * time.Minute
-	KmmModuleNodesMatchingPollInterval = 5 * time.Second
+	// KmmModuleUpgrade* — wait for status.moduleLoader.nodesMatchingSelectorNumber and Scale Daemon version upgrade.
+	KmmModuleUpgradeWaitTimeout  = 30 * time.Minute
+	KmmModuleUpgradePollInterval = 5 * time.Second
+	// ScaleDaemonVersion* — target and old versions for Scale Daemon status.versions verification.
+	ScaleDaemonVersionTarget = "6.0.1.0"
+	ScaleDaemonVersionOld    = "6.0.0.2"
 	// FilesystemRecoveryWait* — wait for Spectrum Scale filesystems to report mounted=true during finalization.
 	FilesystemRecoveryWaitTimeout  = 10 * time.Minute
 	FilesystemRecoveryPollInterval = 30 * time.Second
