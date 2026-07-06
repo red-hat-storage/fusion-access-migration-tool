@@ -90,6 +90,9 @@ const (
 	// FusionOperatorCSVWait* — wait for isf-operator Subscription CSV to reach Succeeded after Fusion Operator install.
 	FusionOperatorCSVWaitTimeout      = 15 * time.Minute
 	FusionOperatorCSVWaitPollInterval = 15 * time.Second
+	// InstallPlanApproval* — wait for user to approve a Manual InstallPlan after subscription update.
+	InstallPlanApprovalWaitTimeout  = 30 * time.Minute
+	InstallPlanApprovalPollInterval = 30 * time.Second
 )
 
 var (
@@ -113,5 +116,8 @@ var (
 	}
 	ConsoleGVR = schema.GroupVersionResource{
 		Group: "operator.openshift.io", Version: "v1", Resource: "consoles",
+	}
+	InstallPlanGVR = schema.GroupVersionResource{
+		Group: "operators.coreos.com", Version: "v1alpha1", Resource: "installplans",
 	}
 )

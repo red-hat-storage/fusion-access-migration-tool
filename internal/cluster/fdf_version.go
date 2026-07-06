@@ -21,6 +21,22 @@ func ParseFdfMajorMinor(specVersion string) (major, minor uint64, err error) {
 	return uint64(v.Major()), uint64(v.Minor()), nil
 }
 
+// OdfRedHatPreflightAllowed validates Red Hat ODF odf-operator CSV spec.version for preflight.
+// Red Hat ODF 4.20.x and 4.21.x are accepted as valid starting points for migration to IBM FDF.
+func OdfRedHatPreflightAllowed(specVersion string) error {
+	major, minor, err := ParseFdfMajorMinor(specVersion)
+	if err != nil {
+		return err
+	}
+	if major != constants.RequiredFDFMajor {
+		return fmt.Errorf("unsupported CSV spec.version major (want %d.x, got %d.%d)", constants.RequiredFDFMajor, major, minor)
+	}
+	if minor != 20 && minor != 21 {
+		return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x or 4.21.x)", minor)
+	}
+	return nil
+}
+
 // FdfOdfPreflightAllowed validates IBM FDF odf-operator CSV spec.version for preflight.
 // IBM FDF 4.20.x is always allowed. IBM FDF 4.21.x is allowed only when resumingFromCheckpoint is true
 // (migration resumed from checkpoint after install phase may have upgraded the operator).

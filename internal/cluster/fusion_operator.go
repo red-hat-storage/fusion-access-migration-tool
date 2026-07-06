@@ -56,9 +56,9 @@ func fusionOperatorCSVWaitDurations(mc *kube.Context) (timeout, interval time.Du
 	return timeout, interval
 }
 
-// operatorGroupTargetsNamespace reports whether og installs operators into targetNS per OLM rules:
+// OperatorGroupTargetsNamespace reports whether og installs operators into targetNS per OLM rules:
 // spec.targetNamespaces containing targetNS, or unset/empty meaning the OperatorGroup's own namespace.
-func operatorGroupTargetsNamespace(og *unstructured.Unstructured, targetNS string) (bool, error) {
+func OperatorGroupTargetsNamespace(og *unstructured.Unstructured, targetNS string) (bool, error) {
 	ownNS := og.GetNamespace()
 	targets, found, err := unstructured.NestedStringSlice(og.Object, "spec", "targetNamespaces")
 	if err != nil {
@@ -83,7 +83,7 @@ func findOperatorGroupCoveringFusionNamespace(mc *kube.Context) (string, bool, e
 	}
 	for i := range list.Items {
 		og := &list.Items[i]
-		ok, err := operatorGroupTargetsNamespace(og, constants.FusionOperatorNS)
+		ok, err := OperatorGroupTargetsNamespace(og, constants.FusionOperatorNS)
 		if err != nil {
 			return "", false, err
 		}
