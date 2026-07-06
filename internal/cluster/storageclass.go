@@ -43,11 +43,12 @@ func ListSpectrumScaleStorageClasses(mc *kube.Context) error {
 
 func spectrumScaleSANStorageClass(name, volBackendFs string, vmDisk bool) *storagev1.StorageClass {
 	params := map[string]string{
-		"filesetType":  "independent",
 		"volBackendFs": volBackendFs,
 	}
 	if vmDisk {
 		params["volumeType"] = "vmdisk"
+	} else {
+		params["filesetType"] = "independent"
 	}
 	binding := storagev1.VolumeBindingImmediate
 	return &storagev1.StorageClass{
