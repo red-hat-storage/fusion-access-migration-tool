@@ -45,6 +45,8 @@ const (
 	SecureBootSigningKeySecret    = "secureboot-signing-key"
 	SecureBootSigningKeyPubSecret = "secureboot-signing-key-pub"
 	OdfOperatorSubPrefix          = "odf-operator"
+	OdfConsolePlugin              = "odf-console"
+	ConsoleClusterName            = "cluster"
 	OdfProviderRedHat             = "Red Hat"
 	OdfProviderIBM                = "IBM"
 
@@ -82,6 +84,9 @@ const (
 	// FDFCatalogSourceReady* — wait for isf-data-foundation-catalog CatalogSource gRPC ready after create/update.
 	FDFCatalogSourceReadyTimeout      = 10 * time.Minute
 	FDFCatalogSourceReadyPollInterval = 1 * time.Minute
+	// KmmCSVWait* — wait for KMM Subscription CSV to reach Succeeded after recreating in openshift-kmm.
+	KmmCSVWaitTimeout      = 10 * time.Minute
+	KmmCSVWaitPollInterval = 30 * time.Second
 	// FusionOperatorCSVWait* — wait for isf-operator Subscription CSV to reach Succeeded after Fusion Operator install.
 	FusionOperatorCSVWaitTimeout      = 15 * time.Minute
 	FusionOperatorCSVWaitPollInterval = 15 * time.Second
@@ -105,5 +110,8 @@ var (
 	}
 	KmmModuleGVR = schema.GroupVersionResource{
 		Group: "kmm.sigs.x-k8s.io", Version: "v1beta1", Resource: "modules",
+	}
+	ConsoleGVR = schema.GroupVersionResource{
+		Group: "operator.openshift.io", Version: "v1", Resource: "consoles",
 	}
 )
