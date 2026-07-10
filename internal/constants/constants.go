@@ -29,6 +29,8 @@ const (
 	FusionOperatorCSVNamePrefix = "isf-operator."
 	// FusionOperatorSubscriptionChannel is the OLM channel for isf-operator.
 	FusionOperatorSubscriptionChannel = "v2.0"
+	// OdfManagerName is the cluster-scoped OdfManager CR installed after Fusion Operator CSV succeeds.
+	OdfManagerName = "odfmanager"
 	// FDFCatalogSourceName is the CatalogSource name for IBM Spectrum Fusion Data Foundation in openshift-marketplace.
 	FDFCatalogSourceName = "isf-data-foundation-catalog"
 
@@ -116,5 +118,8 @@ var (
 	}
 	ConsoleGVR = schema.GroupVersionResource{
 		Group: "operator.openshift.io", Version: "v1", Resource: "consoles",
+	}
+	OdfManagerGVR = schema.GroupVersionResource{
+		Group: "odf.isf.ibm.com", Version: "v1", Resource: "odfmanagers",
 	}
 )

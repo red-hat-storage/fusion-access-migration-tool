@@ -18,12 +18,15 @@ import (
 
 // EnsureFusionOperatorResources creates Namespace, OperatorGroup, CatalogSource, and Subscription for Fusion Operator
 // if they do not already exist; existing resources are skipped with a log message. It then waits until the isf-operator
-// Subscription's CSV reports phase Succeeded (skipped in dry-run).
+// Subscription's CSV reports phase Succeeded and creates the cluster-scoped OdfManager CR (skipped in dry-run).
 func EnsureFusionOperatorResources(mc *kube.Context) error {
 	if err := ensureFusionOperatorOLMInstall(mc); err != nil {
 		return err
 	}
 	if err := waitForFusionOperatorCSVSucceeded(mc); err != nil {
+		return err
+	}
+	if err := ensureOdfManager(mc); err != nil {
 		return err
 	}
 	return nil
@@ -360,4 +363,56 @@ func waitForFusionOperatorCSVSucceeded(mc *kube.Context) error {
 		)
 	}
 	return err
+}
+
+func odfManagerObject() *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "odf.isf.ibm.com/v1",
+			"kind":       "OdfManager",
+			"metadata": map[string]interface{}{
+				"name": constants.OdfManagerName,
+			},
+			"spec": map[string]interface{}{
+				"autoUpgrade":        true,
+				"backingStorageType": "External",
+				"creator":            "Fusion",
+			},
+		},
+	}
+}
+
+// ensureOdfManager creates the cluster-scoped OdfManager CR if it does not already exist.
+func ensureOdfManager(mc *kube.Context) error {
+	res := mc.Dynamic.Resource(constants.OdfManagerGVR)
+	name := constants.OdfManagerName
+
+	if mc.DryRun {
+		output.PrintDryRun(fmt.Sprintf(
+			"Would create OdfManager %s (autoUpgrade=true backingStorageType=External creator=Fusion)",
+			name,
+		))
+		return nil
+	}
+
+	_, err := res.Get(mc.Ctx, name, metav1.GetOptions{})
+	if err == nil {
+		output.PrintSkip(fmt.Sprintf("OdfManager %s already exists", name))
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get OdfManager %s: %w", name, err)
+	}
+
+	desired := odfManagerObject()
+	_, err = res.Create(mc.Ctx, desired, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create OdfManager %s: %w", name, err)
+	}
+	if apierrors.IsAlreadyExists(err) {
+		output.PrintSkip(fmt.Sprintf("OdfManager %s already exists", name))
+	} else {
+		output.PrintSuccess(fmt.Sprintf("Created OdfManager %s", name))
+	}
+	return nil
 }
