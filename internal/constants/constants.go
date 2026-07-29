@@ -29,6 +29,8 @@ const (
 	FusionOperatorCSVNamePrefix = "isf-operator."
 	// FusionOperatorSubscriptionChannel is the OLM channel for isf-operator.
 	FusionOperatorSubscriptionChannel = "v2.0"
+	// OdfManagerName is the cluster-scoped OdfManager CR installed after Fusion Operator CSV succeeds.
+	OdfManagerName = "odfmanager"
 	// FDFCatalogSourceName is the CatalogSource name for IBM Spectrum Fusion Data Foundation in openshift-marketplace.
 	FDFCatalogSourceName = "isf-data-foundation-catalog"
 
@@ -75,9 +77,12 @@ const (
 	// KmmModuleDelete* — wait for each modules.kmm object to disappear after Delete (namespace delete is blocked until gone).
 	KmmModuleDeleteWaitTimeout  = 15 * time.Minute
 	KmmModuleDeletePollInterval = 5 * time.Second
-	// KmmModuleNodesMatching* — wait for status.moduleLoader.nodesMatchingSelectorNumber to become 0 after Scale cluster enables KMM.
-	KmmModuleNodesMatchingWaitTimeout  = 30 * time.Minute
-	KmmModuleNodesMatchingPollInterval = 5 * time.Second
+	// KmmModuleUpgrade* — wait for status.moduleLoader.nodesMatchingSelectorNumber and Scale Daemon version upgrade.
+	KmmModuleUpgradeWaitTimeout  = 30 * time.Minute
+	KmmModuleUpgradePollInterval = 5 * time.Second
+	// ScaleDaemonVersion* — target and old versions for Scale Daemon status.versions verification.
+	ScaleDaemonVersionTarget = "6.0.1.0"
+	ScaleDaemonVersionOld    = "6.0.0.2"
 	// FilesystemRecoveryWait* — wait for Spectrum Scale filesystems to report mounted=true during finalization.
 	FilesystemRecoveryWaitTimeout  = 10 * time.Minute
 	FilesystemRecoveryPollInterval = 30 * time.Second
@@ -113,5 +118,8 @@ var (
 	}
 	ConsoleGVR = schema.GroupVersionResource{
 		Group: "operator.openshift.io", Version: "v1", Resource: "consoles",
+	}
+	OdfManagerGVR = schema.GroupVersionResource{
+		Group: "odf.isf.ibm.com", Version: "v1", Resource: "odfmanagers",
 	}
 )

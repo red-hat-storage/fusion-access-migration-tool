@@ -53,6 +53,9 @@ rules:
   - apiGroups: ["kmm.sigs.x-k8s.io"]
     resources: ["nodemodulesconfigs"]
     verbs: ["get", "list", "update", "patch", "delete"]
+  - apiGroups: ["odf.isf.ibm.com"]
+    resources: ["odfmanagers"]
+    verbs: ["get", "list", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

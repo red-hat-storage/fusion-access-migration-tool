@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,89 +57,6 @@ func getKMMModuleName(mc *kube.Context, namespace string) (string, bool, error) 
 	default:
 		return "", false, fmt.Errorf("expected exactly one %s in %s, found at least %d", constants.KmmModulesResource, namespace, len(list.Items))
 	}
-}
-
-func nodesMatchingWaitTarget(namespace, name string, ok bool) string {
-	if ok {
-		return formatKMMModule(namespace, name)
-	}
-	return fmt.Sprintf("KMM Module in namespace %s", namespace)
-}
-
-func printNodesMatchingWaitDryRun(namespace, name string, want int64, ok bool) {
-	output.PrintDryRun(fmt.Sprintf(
-		"Would wait up to %v for %s: %s (poll every %v)",
-		constants.KmmModuleNodesMatchingWaitTimeout,
-		nodesMatchingWaitTarget(namespace, name, ok),
-		kmmModuleLoaderWaitConditionDescription(want),
-		constants.KmmModuleNodesMatchingPollInterval,
-	))
-}
-
-func printNodesMatchingWaitStart(namespace, name string, want int64) {
-	output.PrintInfo(fmt.Sprintf(
-		"Waiting up to %v for %s: %s (poll every %v)...",
-		constants.KmmModuleNodesMatchingWaitTimeout,
-		formatKMMModule(namespace, name),
-		kmmModuleLoaderWaitConditionDescription(want),
-		constants.KmmModuleNodesMatchingPollInterval,
-	))
-}
-
-func kmmModuleLoaderWaitConditionDescription(want int64) string {
-	if want == 0 {
-		return fmt.Sprintf("status.moduleLoader.nodesMatchingSelectorNumber == %d", want)
-	}
-	return fmt.Sprintf(
-		"status.moduleLoader.nodesMatchingSelectorNumber == %d and status.moduleLoader.desiredNumber == status.moduleLoader.availableNumber",
-		want,
-	)
-}
-
-func PrintKMMModulesInFusionAccess(mc *kube.Context) (int64, error) {
-	name, ok, err := getKMMModuleName(mc, constants.FusionAccessNS)
-	if err != nil {
-		return 0, err
-	}
-	if !ok {
-		nsMissing, nsErr := kmmModuleNamespaceMissing(mc, constants.FusionAccessNS)
-		if nsErr != nil {
-			return 0, nsErr
-		}
-		if nsMissing {
-			output.PrintSkip(fmt.Sprintf("Namespace %s not found — skipping %s listing (resume after namespace removed)", constants.FusionAccessNS, constants.KmmModulesResource))
-			return 0, nil
-		}
-		output.PrintInfo(fmt.Sprintf("%s in namespace %s (oc get %s -n %s):",
-			constants.KmmModulesResource, constants.FusionAccessNS, constants.KmmModulesResource, constants.FusionAccessNS))
-		output.PrintInfo("  (none)")
-		return 0, nil
-	}
-
-	mod, err := mc.Dynamic.Resource(constants.KmmModuleGVR).Namespace(constants.FusionAccessNS).Get(mc.Ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("get %s: %w", formatKMMModule(constants.FusionAccessNS, name), err)
-	}
-	fin := mod.GetFinalizers()
-	finDesc := "(none)"
-	if len(fin) > 0 {
-		finDesc = strings.Join(fin, ", ")
-	}
-	nodesMatching, reported, err := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldNodesMatchingSelectorNumber)
-	if err != nil {
-		return 0, fmt.Errorf("%s: read nodesMatchingSelectorNumber: %w", formatKMMModule(constants.FusionAccessNS, name), err)
-	}
-	nodesMatchingDesc := "(not reported)"
-	if reported {
-		nodesMatchingDesc = fmt.Sprintf("%d", nodesMatching)
-	}
-	output.PrintInfo(fmt.Sprintf("%s in namespace %s (oc get %s -n %s):",
-		constants.KmmModulesResource, constants.FusionAccessNS, constants.KmmModulesResource, constants.FusionAccessNS))
-	output.PrintInfo(fmt.Sprintf(
-		"  name=%s  generation=%d  resourceVersion=%s  finalizers=[%s]  nodesMatchingSelectorNumber=%s",
-		mod.GetName(), mod.GetGeneration(), mod.GetResourceVersion(), finDesc, nodesMatchingDesc,
-	))
-	return nodesMatching, nil
 }
 
 // resolveScaleImageDigestFromNodes returns scale.spectrum.ibm.com/image-digest from a storage node when possible,
@@ -384,185 +302,265 @@ func ScaleDaemonNodeSelectorNodeCount(mc *kube.Context) (int64, error) {
 	return count, nil
 }
 
-func waitForKMMModuleLoaderNodesMatchingSelector(
-	mc *kube.Context, namespace, moduleName string, want int64, skipIfNotFound bool, timeout, poll time.Duration,
-) error {
-	var loggedWaiting bool
-	var loggedNotFound bool
+// scaleDaemonVersionEntry represents one element of status.versions on the Scale Daemon CR.
+type scaleDaemonVersionEntry struct {
+	Version string
+	Count   string
+	Pods    string
+}
+
+// readScaleDaemonVersions reads status.versions from a Scale Daemon unstructured object.
+func readScaleDaemonVersions(obj map[string]interface{}) ([]scaleDaemonVersionEntry, error) {
+	raw, found, err := unstructured.NestedSlice(obj, "status", "versions")
+	if err != nil {
+		return nil, fmt.Errorf("read status.versions: %w", err)
+	}
+	if !found || len(raw) == 0 {
+		return nil, nil
+	}
+	entries := make([]scaleDaemonVersionEntry, 0, len(raw))
+	for i, item := range raw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("status.versions[%d]: expected map, got %T", i, item)
+		}
+		ver, _, _ := unstructured.NestedString(m, "version")
+		cnt, _, _ := unstructured.NestedString(m, "count")
+		pods, _, _ := unstructured.NestedString(m, "pods")
+		entries = append(entries, scaleDaemonVersionEntry{Version: ver, Count: cnt, Pods: pods})
+	}
+	return entries, nil
+}
+
+func formatDaemonVersions(entries []scaleDaemonVersionEntry) string {
+	if len(entries) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		parts = append(parts, fmt.Sprintf("%s(count=%s, pods=%s)", e.Version, e.Count, e.Pods))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// WaitForScaleDaemonVersionUpgrade polls the Scale Daemon CR in ibm-spectrum-scale until
+// status.versions contains only the target version (6.0.1.0) with count equal to wantCount,
+// and the old version (6.0.0.2) is no longer present. This confirms the actual kernel module
+// upgrade on nodes has completed, not just that nodes matched the KMM Module label selector.
+func WaitForScaleDaemonVersionUpgrade(mc *kube.Context, wantCount int64) error {
+	gvr, err := resolveScaleDaemonGVR(mc)
+	if err != nil {
+		return err
+	}
+	list, err := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS).List(mc.Ctx, metav1.ListOptions{Limit: 2})
+	if err != nil {
+		return fmt.Errorf("list Scale Daemons in %s: %w", constants.SpectrumScaleNS, err)
+	}
+	if len(list.Items) == 0 {
+		return fmt.Errorf("no Scale Daemon found in %s", constants.SpectrumScaleNS)
+	}
+	if len(list.Items) > 1 {
+		return fmt.Errorf("expected exactly one Scale Daemon in %s, found at least %d", constants.SpectrumScaleNS, len(list.Items))
+	}
+	daemonName := list.Items[0].GetName()
+	wantCountStr := strconv.FormatInt(wantCount, 10)
+
+	if mc.DryRun {
+		output.PrintDryRun(fmt.Sprintf(
+			"Would wait up to %v for Daemon %s/%s status.versions: version %s count==%s and version %s absent (poll every %v)",
+			constants.KmmModuleUpgradeWaitTimeout,
+			constants.SpectrumScaleNS, daemonName,
+			constants.ScaleDaemonVersionTarget, wantCountStr,
+			constants.ScaleDaemonVersionOld,
+			constants.KmmModuleUpgradePollInterval,
+		))
+		return nil
+	}
+
+	output.PrintInfo(fmt.Sprintf(
+		"Waiting up to %v for Daemon %s/%s: status.versions version %s count==%s and version %s absent (poll every %v)...",
+		constants.KmmModuleUpgradeWaitTimeout,
+		constants.SpectrumScaleNS, daemonName,
+		constants.ScaleDaemonVersionTarget, wantCountStr,
+		constants.ScaleDaemonVersionOld,
+		constants.KmmModuleUpgradePollInterval,
+	))
+
+	res := mc.Dynamic.Resource(gvr).Namespace(constants.SpectrumScaleNS)
 	iter := 0
-	var lastVal int64
-	var lastReported bool
-	err := helpers.PollUntil(mc.Ctx, func() (bool, error) {
+	var lastEntries []scaleDaemonVersionEntry
+	err = helpers.PollUntil(mc.Ctx, func() (bool, error) {
 		iter++
-		mod, err := mc.Dynamic.Resource(constants.KmmModuleGVR).Namespace(namespace).Get(mc.Ctx, moduleName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			if skipIfNotFound {
-				output.PrintSkip(fmt.Sprintf("%s not found — treating nodesMatchingSelectorNumber wait as satisfied", formatKMMModule(namespace, moduleName)))
-				return true, nil
-			}
-			if !loggedNotFound {
-				output.PrintInfo(fmt.Sprintf("Waiting for %s to appear...", formatKMMModule(namespace, moduleName)))
-				loggedNotFound = true
-			}
-			return false, nil
-		}
+		daemon, err := res.Get(mc.Ctx, daemonName, metav1.GetOptions{})
 		if err != nil {
-			return false, fmt.Errorf("get %s: %w", formatKMMModule(namespace, moduleName), err)
+			return false, fmt.Errorf("get Daemon %s/%s: %w", constants.SpectrumScaleNS, daemonName, err)
 		}
-		val, reported, rerr := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldNodesMatchingSelectorNumber)
-		if rerr != nil {
-			return false, fmt.Errorf("%s: %w", formatKMMModule(namespace, moduleName), rerr)
+		entries, err := readScaleDaemonVersions(daemon.Object)
+		if err != nil {
+			return false, fmt.Errorf("daemon %s/%s: %w", constants.SpectrumScaleNS, daemonName, err)
 		}
-		lastVal = val
-		lastReported = reported
-		if !reported {
-			if !loggedWaiting {
-				output.PrintInfo(fmt.Sprintf("Waiting for %s status.moduleLoader.nodesMatchingSelectorNumber to be reported...", formatKMMModule(namespace, moduleName)))
-				loggedWaiting = true
-			}
-			return false, nil
-		}
-		if val != want {
+		lastEntries = entries
+
+		if len(entries) == 0 {
 			if iter == 1 || iter%12 == 0 {
 				output.PrintInfo(fmt.Sprintf(
-					"Waiting for %s status.moduleLoader.nodesMatchingSelectorNumber==%d (current %d)...",
-					formatKMMModule(namespace, moduleName), want, val,
+					"Daemon %s/%s: status.versions not reported yet...",
+					constants.SpectrumScaleNS, daemonName,
 				))
 			}
 			return false, nil
 		}
 
-		if want == 0 {
-			output.PrintSuccess(fmt.Sprintf("%s: status.moduleLoader.nodesMatchingSelectorNumber is %d", formatKMMModule(namespace, moduleName), want))
+		oldPresent := false
+		targetFound := false
+		var targetCount string
+		for _, e := range entries {
+			if e.Version == constants.ScaleDaemonVersionOld {
+				oldPresent = true
+			}
+			if e.Version == constants.ScaleDaemonVersionTarget {
+				targetFound = true
+				targetCount = e.Count
+			}
+		}
+
+		if !oldPresent && targetFound && targetCount == wantCountStr {
+			output.PrintSuccess(fmt.Sprintf(
+				"Daemon %s/%s: status.versions shows version %s count=%s and version %s is absent",
+				constants.SpectrumScaleNS, daemonName,
+				constants.ScaleDaemonVersionTarget, wantCountStr,
+				constants.ScaleDaemonVersionOld,
+			))
 			return true, nil
 		}
 
-		desired, desiredReported, rerr := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldDesiredNumber)
-		if rerr != nil {
-			return false, fmt.Errorf("%s: %w", formatKMMModule(namespace, moduleName), rerr)
+		if iter == 1 || iter%12 == 0 {
+			output.PrintInfo(fmt.Sprintf(
+				"Daemon %s/%s: status.versions=[%s] — waiting for version %s count==%s and version %s absent...",
+				constants.SpectrumScaleNS, daemonName,
+				formatDaemonVersions(entries),
+				constants.ScaleDaemonVersionTarget, wantCountStr,
+				constants.ScaleDaemonVersionOld,
+			))
 		}
-		available, availableReported, rerr := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldAvailableNumber)
-		if rerr != nil {
-			return false, fmt.Errorf("%s: %w", formatKMMModule(namespace, moduleName), rerr)
-		}
-		if !desiredReported || !availableReported {
-			if iter == 1 || iter%12 == 0 {
-				output.PrintInfo(fmt.Sprintf(
-					"Waiting for %s status.moduleLoader.desiredNumber and status.moduleLoader.availableNumber to be reported...",
-					formatKMMModule(namespace, moduleName),
-				))
-			}
-			return false, nil
-		}
-		if desired != available {
-			if iter == 1 || iter%12 == 0 {
-				output.PrintInfo(fmt.Sprintf(
-					"Waiting for %s status.moduleLoader.desiredNumber==status.moduleLoader.availableNumber (desired %d, available %d)...",
-					formatKMMModule(namespace, moduleName), desired, available,
-				))
-			}
-			return false, nil
-		}
+		return false, nil
+	}, constants.KmmModuleUpgradeWaitTimeout, constants.KmmModuleUpgradePollInterval,
+		fmt.Sprintf("Scale Daemon %s/%s version upgrade to %s", constants.SpectrumScaleNS, daemonName, constants.ScaleDaemonVersionTarget),
+	)
 
-		output.PrintSuccess(fmt.Sprintf(
-			"%s: status.moduleLoader.nodesMatchingSelectorNumber is %d and status.moduleLoader.desiredNumber==status.moduleLoader.availableNumber (%d)",
-			formatKMMModule(namespace, moduleName), want, desired,
-		))
-		return true, nil
-	}, timeout, poll, kmmModuleLoaderWaitPollDescription(want, formatKMMModule(namespace, moduleName)))
 	if err != nil && errors.Is(err, helpers.ErrPollDeadline) {
-		moduleRef := formatKMMModule(namespace, moduleName)
-		condition := kmmModuleLoaderWaitConditionDescription(want)
-		if lastReported {
-			return fmt.Errorf(
-				"timeout after %v waiting for %s on %s (last reported nodesMatchingSelectorNumber %d)",
-				timeout, condition, moduleRef, lastVal,
-			)
-		}
 		return fmt.Errorf(
-			"timeout after %v waiting for %s on %s (status not reported)",
-			timeout, condition, moduleRef,
+			"timeout after %v waiting for Daemon %s/%s version upgrade: want version %s count==%s and version %s absent (last seen: [%s])",
+			constants.KmmModuleUpgradeWaitTimeout,
+			constants.SpectrumScaleNS, daemonName,
+			constants.ScaleDaemonVersionTarget, wantCountStr,
+			constants.ScaleDaemonVersionOld,
+			formatDaemonVersions(lastEntries),
 		)
 	}
 	return err
 }
 
-func kmmModuleLoaderWaitPollDescription(want int64, moduleRef string) string {
-	return fmt.Sprintf("%s on %s", kmmModuleLoaderWaitConditionDescription(want), moduleRef)
-}
-
-// WaitForKMMModuleNodesMatching polls the KMM Module in namespace until
-// status.moduleLoader.nodesMatchingSelectorNumber equals want. When want is not 0,
-// also waits until status.moduleLoader.desiredNumber equals status.moduleLoader.availableNumber.
-// In ibm-fusion-access, skips when the namespace or module is already gone.
-// In ibm-spectrum-scale, the module is expected to already exist (Fusion Access
-// nodesMatchingSelectorNumber reaches 0 only once the Scale module has taken over).
-func WaitForKMMModuleNodesMatching(mc *kube.Context, namespace string, want int64) error {
-	switch namespace {
-	case constants.FusionAccessNS:
-		return waitForKMMModuleNodesMatchingInFusionAccess(mc, namespace, want)
-	case constants.SpectrumScaleNS:
-		return waitForKMMModuleNodesMatchingInSpectrumScale(mc, namespace, want)
-	default:
-		return fmt.Errorf("unsupported namespace %q for KMM Module nodesMatchingSelectorNumber wait", namespace)
-	}
-}
-
-func waitForKMMModuleNodesMatchingInFusionAccess(mc *kube.Context, namespace string, want int64) error {
-	name, ok, err := getKMMModuleName(mc, namespace)
+// CheckFusionAccessKMMModuleNodesZero asserts that the KMM Module in ibm-fusion-access
+// reports nodesMatchingSelectorNumber == 0. Skips gracefully if the namespace or module
+// is already gone (resume scenario).
+func CheckFusionAccessKMMModuleNodesZero(mc *kube.Context) error {
+	name, ok, err := getKMMModuleName(mc, constants.FusionAccessNS)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		nsMissing, nsErr := kmmModuleNamespaceMissing(mc, namespace)
+		nsMissing, nsErr := kmmModuleNamespaceMissing(mc, constants.FusionAccessNS)
 		if nsErr != nil {
 			return nsErr
 		}
 		if nsMissing {
-			if mc.DryRun {
-				printNodesMatchingWaitDryRun(namespace, "", want, false)
-			} else {
-				output.PrintSkip(fmt.Sprintf("Namespace %s not found — skipping wait for nodesMatchingSelectorNumber on KMM Module", namespace))
-			}
+			output.PrintSkip(fmt.Sprintf("Namespace %s not found — skipping old KMM Module assertion", constants.FusionAccessNS))
 			return nil
 		}
-		if mc.DryRun {
-			printNodesMatchingWaitDryRun(namespace, "", want, false)
-		} else {
-			output.PrintSkip(fmt.Sprintf("No %s in namespace %s — skipping wait for nodesMatchingSelectorNumber", constants.KmmModulesResource, namespace))
-		}
+		output.PrintSkip(fmt.Sprintf("No %s in %s — skipping old KMM Module assertion (already removed)", constants.KmmModulesResource, constants.FusionAccessNS))
 		return nil
 	}
 	if mc.DryRun {
-		printNodesMatchingWaitDryRun(namespace, name, want, true)
+		output.PrintDryRun(fmt.Sprintf(
+			"Would assert %s nodesMatchingSelectorNumber == 0",
+			formatKMMModule(constants.FusionAccessNS, name),
+		))
 		return nil
 	}
-	printNodesMatchingWaitStart(namespace, name, want)
-	return waitForKMMModuleLoaderNodesMatchingSelector(
-		mc, namespace, name, want, true,
-		constants.KmmModuleNodesMatchingWaitTimeout,
-		constants.KmmModuleNodesMatchingPollInterval,
-	)
+	mod, err := mc.Dynamic.Resource(constants.KmmModuleGVR).Namespace(constants.FusionAccessNS).Get(mc.Ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			output.PrintSkip(fmt.Sprintf("%s not found — skipping old KMM Module assertion", formatKMMModule(constants.FusionAccessNS, name)))
+			return nil
+		}
+		return fmt.Errorf("get %s: %w", formatKMMModule(constants.FusionAccessNS, name), err)
+	}
+	val, reported, err := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldNodesMatchingSelectorNumber)
+	if err != nil {
+		return fmt.Errorf("%s: read nodesMatchingSelectorNumber: %w", formatKMMModule(constants.FusionAccessNS, name), err)
+	}
+	if !reported {
+		output.PrintSuccess(fmt.Sprintf("%s: nodesMatchingSelectorNumber not reported (module inactive)", formatKMMModule(constants.FusionAccessNS, name)))
+		return nil
+	}
+	if val != 0 {
+		return fmt.Errorf("%s: expected nodesMatchingSelectorNumber == 0, got %d", formatKMMModule(constants.FusionAccessNS, name), val)
+	}
+	output.PrintSuccess(fmt.Sprintf("%s: nodesMatchingSelectorNumber is 0", formatKMMModule(constants.FusionAccessNS, name)))
+	return nil
 }
 
-func waitForKMMModuleNodesMatchingInSpectrumScale(mc *kube.Context, namespace string, want int64) error {
-	name, ok, err := getKMMModuleName(mc, namespace)
+// CheckSpectrumScaleKMMModuleNodesMatching asserts that the KMM Module in ibm-spectrum-scale
+// reports nodesMatchingSelectorNumber == want and desiredNumber == availableNumber.
+func CheckSpectrumScaleKMMModuleNodesMatching(mc *kube.Context, want int64) error {
+	name, ok, err := getKMMModuleName(mc, constants.SpectrumScaleNS)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("expected exactly one %s in %s (should exist after Fusion Access module reached nodesMatchingSelectorNumber 0)", constants.KmmModulesResource, namespace)
+		return fmt.Errorf("expected exactly one %s in %s, found none", constants.KmmModulesResource, constants.SpectrumScaleNS)
 	}
 	if mc.DryRun {
-		printNodesMatchingWaitDryRun(namespace, name, want, true)
+		output.PrintDryRun(fmt.Sprintf(
+			"Would assert %s nodesMatchingSelectorNumber == %d and desiredNumber == availableNumber",
+			formatKMMModule(constants.SpectrumScaleNS, name), want,
+		))
 		return nil
 	}
-	printNodesMatchingWaitStart(namespace, name, want)
-	return waitForKMMModuleLoaderNodesMatchingSelector(
-		mc, namespace, name, want, false,
-		constants.KmmModuleNodesMatchingWaitTimeout,
-		constants.KmmModuleNodesMatchingPollInterval,
-	)
+	mod, err := mc.Dynamic.Resource(constants.KmmModuleGVR).Namespace(constants.SpectrumScaleNS).Get(mc.Ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get %s: %w", formatKMMModule(constants.SpectrumScaleNS, name), err)
+	}
+	val, reported, err := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldNodesMatchingSelectorNumber)
+	if err != nil {
+		return fmt.Errorf("%s: read nodesMatchingSelectorNumber: %w", formatKMMModule(constants.SpectrumScaleNS, name), err)
+	}
+	if !reported {
+		return fmt.Errorf("%s: nodesMatchingSelectorNumber not yet reported", formatKMMModule(constants.SpectrumScaleNS, name))
+	}
+	if val != want {
+		return fmt.Errorf("%s: expected nodesMatchingSelectorNumber == %d, got %d", formatKMMModule(constants.SpectrumScaleNS, name), want, val)
+	}
+	desired, desiredReported, err := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldDesiredNumber)
+	if err != nil {
+		return fmt.Errorf("%s: read desiredNumber: %w", formatKMMModule(constants.SpectrumScaleNS, name), err)
+	}
+	available, availableReported, err := readModuleStatusModuleLoader(mod.Object, moduleLoaderFieldAvailableNumber)
+	if err != nil {
+		return fmt.Errorf("%s: read availableNumber: %w", formatKMMModule(constants.SpectrumScaleNS, name), err)
+	}
+	if !desiredReported || !availableReported {
+		return fmt.Errorf("%s: desiredNumber or availableNumber not yet reported", formatKMMModule(constants.SpectrumScaleNS, name))
+	}
+	if desired != available {
+		return fmt.Errorf("%s: desiredNumber (%d) != availableNumber (%d)", formatKMMModule(constants.SpectrumScaleNS, name), desired, available)
+	}
+	output.PrintSuccess(fmt.Sprintf(
+		"%s: nodesMatchingSelectorNumber is %d and desiredNumber == availableNumber (%d)",
+		formatKMMModule(constants.SpectrumScaleNS, name), want, desired,
+	))
+	return nil
 }
 
 // DeleteFusionAccessKMMModuleStripFinalizers deletes the KMM Module in ibm-fusion-access and waits until
