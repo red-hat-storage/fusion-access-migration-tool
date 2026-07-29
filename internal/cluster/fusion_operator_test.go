@@ -132,6 +132,7 @@ func newFusionOperatorTestContext(cs kubernetes.Interface, dynObjs ...*unstructu
 	}
 	customListKinds := map[schema.GroupVersionResource]string{
 		constants.OperatorGroupGVR: "OperatorGroupList",
+		constants.OdfManagerGVR:    "OdfManagerList",
 	}
 	runtimeObjs := make([]runtime.Object, 0, len(dynObjs))
 	for _, o := range dynObjs {
@@ -437,5 +438,83 @@ func TestWaitForFusionOperatorCSVSucceeded_timesOutWithoutCurrentCSV(t *testing.
 	}
 	if !strings.Contains(err.Error(), "did not reach Succeeded") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func testOdfManager() *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "odf.isf.ibm.com/v1",
+			"kind":       "OdfManager",
+			"metadata": map[string]interface{}{
+				"name": constants.OdfManagerName,
+			},
+			"spec": map[string]interface{}{
+				"autoUpgrade":        true,
+				"backingStorageType": "External",
+				"creator":            "Fusion",
+			},
+		},
+	}
+}
+
+func TestEnsureOdfManager_createsWhenMissing(t *testing.T) {
+	mc := newFusionOperatorTestContext(nil)
+	mc.DryRun = false
+
+	if err := ensureOdfManager(mc); err != nil {
+		t.Fatalf("ensureOdfManager: %v", err)
+	}
+
+	got, err := mc.Dynamic.Resource(constants.OdfManagerGVR).Get(mc.Ctx, constants.OdfManagerName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get OdfManager: %v", err)
+	}
+	autoUpgrade, _, _ := unstructured.NestedBool(got.Object, "spec", "autoUpgrade")
+	if !autoUpgrade {
+		t.Fatalf("spec.autoUpgrade = %v, want true", autoUpgrade)
+	}
+	backing, _, _ := unstructured.NestedString(got.Object, "spec", "backingStorageType")
+	if backing != "External" {
+		t.Fatalf("spec.backingStorageType = %q, want External", backing)
+	}
+	creator, _, _ := unstructured.NestedString(got.Object, "spec", "creator")
+	if creator != "Fusion" {
+		t.Fatalf("spec.creator = %q, want Fusion", creator)
+	}
+}
+
+func TestEnsureOdfManager_skipsWhenExists(t *testing.T) {
+	existing := testOdfManager()
+	mc := newFusionOperatorTestContext(nil, existing)
+	mc.DryRun = false
+
+	if err := ensureOdfManager(mc); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := ensureOdfManager(mc); err != nil {
+		t.Fatalf("second run (idempotent): %v", err)
+	}
+
+	list, err := mc.Dynamic.Resource(constants.OdfManagerGVR).List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list OdfManagers: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 OdfManager, got %d", len(list.Items))
+	}
+}
+
+func TestEnsureOdfManager_dryRun(t *testing.T) {
+	mc := newFusionOperatorTestContext(nil)
+	mc.DryRun = true
+
+	if err := ensureOdfManager(mc); err != nil {
+		t.Fatalf("ensureOdfManager dry-run: %v", err)
+	}
+
+	_, err := mc.Dynamic.Resource(constants.OdfManagerGVR).Get(mc.Ctx, constants.OdfManagerName, metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected OdfManager absent after dry-run, err=%v", err)
 	}
 }
