@@ -114,7 +114,7 @@ func ensureOpenShiftStorageOperatorGroup(mc *kube.Context) error {
 func WaitForFDFAndSpectrumScaleOperatorCSVs(mc *kube.Context) error {
 	if mc.DryRun {
 		output.PrintDryRun(fmt.Sprintf(
-			"Would wait for FDF odf-operator CSV Succeeded in %s, enable Console plugin %q, then CSV with prefix %q in %s Succeeded",
+			"Would wait for FDF odf-operator CSV Succeeded in %s, enable Console plugin %q, then CSV with prefix %q in %s Succeeded (scale CSV deployment replicas to 1 if 0)",
 			constants.OpenShiftStorageNS, constants.OdfConsolePlugin,
 			constants.SpectrumScaleOperatorCSVNamePrefix, constants.SpectrumScaleNS,
 		))
@@ -347,15 +347,17 @@ func reconcileAllOdfSubscriptions(mc *kube.Context) error {
 
 		if mc.DryRun {
 			output.PrintDryRun(fmt.Sprintf(
-				"Would update Subscription %q (source=%s→%s, channel=%s→%s)",
+				"Would update Subscription %q (source=%s→%s, channel=%s→%s, sourceNamespace→%s)",
 				name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
+				constants.OpenShiftMarketplaceNS,
 			))
 			continue
 		}
 
 		output.PrintInfo(fmt.Sprintf(
-			"Updating Subscription %q (source=%s→%s, channel=%s→%s)",
+			"Updating Subscription %q (source=%s→%s, channel=%s→%s, sourceNamespace→%s)",
 			name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
+			constants.OpenShiftMarketplaceNS,
 		))
 		applyFdfCatalogAndChannelToSubscription(sub)
 		if _, err := subRes.Update(mc.Ctx, sub, metav1.UpdateOptions{}); err != nil {
@@ -482,9 +484,10 @@ func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 		fdfSubscription := newFdfOperatorSubscription()
 		if mc.DryRun {
 			output.PrintDryRun(fmt.Sprintf(
-				"Would create FDF subscription %s in %s (channel %s, source %s, sourceNamespace %s)",
+				"Would create FDF subscription %s in %s (channel %s, source %s, sourceNamespace %s, installPlanApproval=Automatic, label %s)",
 				subName, constants.OpenShiftStorageNS, constants.OdfSubscriptionChannel,
 				constants.FDFCatalogSourceName, constants.OpenShiftMarketplaceNS,
+				constants.OdfOperatorCreatorFusionLabelKey,
 			))
 			return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)
 		}
@@ -539,8 +542,8 @@ func reconcileExistingFdfSubscriptionAndWait(mc *kube.Context, subRes dynamic.Re
 			output.PrintDryRun(fmt.Sprintf("Would skip update; Subscription %s already matches desired channel and source", subName))
 		} else {
 			output.PrintDryRun(fmt.Sprintf(
-				"Would update Subscription %s (channel, source, sourceNamespace, labels)",
-				subName,
+				"Would update Subscription %s (channel, source, sourceNamespace, installPlanApproval=Automatic, label %s)",
+				subName, constants.OdfOperatorCreatorFusionLabelKey,
 			))
 		}
 		return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)

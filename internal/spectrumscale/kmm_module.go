@@ -518,15 +518,22 @@ func CheckSpectrumScaleKMMModuleNodesMatching(mc *kube.Context, want int64) erro
 	if err != nil {
 		return err
 	}
+	if mc.DryRun {
+		if ok {
+			output.PrintDryRun(fmt.Sprintf(
+				"Would assert %s nodesMatchingSelectorNumber == %d and desiredNumber == availableNumber",
+				formatKMMModule(constants.SpectrumScaleNS, name), want,
+			))
+		} else {
+			output.PrintDryRun(fmt.Sprintf(
+				"Would assert %s in %s (created after enabling KMM) nodesMatchingSelectorNumber == %d and desiredNumber == availableNumber",
+				constants.KmmModulesResource, constants.SpectrumScaleNS, want,
+			))
+		}
+		return nil
+	}
 	if !ok {
 		return fmt.Errorf("expected exactly one %s in %s, found none", constants.KmmModulesResource, constants.SpectrumScaleNS)
-	}
-	if mc.DryRun {
-		output.PrintDryRun(fmt.Sprintf(
-			"Would assert %s nodesMatchingSelectorNumber == %d and desiredNumber == availableNumber",
-			formatKMMModule(constants.SpectrumScaleNS, name), want,
-		))
-		return nil
 	}
 	mod, err := mc.Dynamic.Resource(constants.KmmModuleGVR).Namespace(constants.SpectrumScaleNS).Get(mc.Ctx, name, metav1.GetOptions{})
 	if err != nil {
