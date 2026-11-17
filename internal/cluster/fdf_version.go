@@ -22,7 +22,8 @@ func ParseFdfMajorMinor(specVersion string) (major, minor uint64, err error) {
 }
 
 // OdfRedHatPreflightAllowed validates Red Hat ODF odf-operator CSV spec.version for preflight.
-// Red Hat ODF 4.20.x and 4.21.x are accepted as valid starting points for migration to IBM FDF.
+// Red Hat ODF 4.20.x is accepted as a valid starting point for migration to IBM FDF.
+// Red Hat ODF 4.21.x is temporarily blocked and will be re-allowed later.
 func OdfRedHatPreflightAllowed(specVersion string) error {
 	major, minor, err := ParseFdfMajorMinor(specVersion)
 	if err != nil {
@@ -31,8 +32,18 @@ func OdfRedHatPreflightAllowed(specVersion string) error {
 	if major != constants.RequiredFDFMajor {
 		return fmt.Errorf("unsupported CSV spec.version major (want %d.x, got %d.%d)", constants.RequiredFDFMajor, major, minor)
 	}
-	if minor != 20 && minor != 21 {
-		return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x or 4.21.x)", minor)
+	// TO BE REMOVED: temporary block of Red Hat ODF 4.21.x.
+	// Delete this block (and the temporary reject below) to restore the current flow
+	// that accepts 4.20.x and 4.21.x.
+	if minor == 21 {
+		return fmt.Errorf("unsupported Red Hat ODF 4.21.x: temporarily unsupported for migration (only 4.20.x is accepted)")
+	}
+	// Current / future allowlist (restore by removing the TO BE REMOVED block above):
+	// if minor != 20 && minor != 21 {
+	// 	return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x or 4.21.x)", minor)
+	// }
+	if minor != 20 {
+		return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x)", minor)
 	}
 	return nil
 }

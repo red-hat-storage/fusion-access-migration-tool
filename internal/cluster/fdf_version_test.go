@@ -43,17 +43,28 @@ func TestOdfRedHatPreflightAllowed(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("allows 4.21", func(t *testing.T) {
-		if err := OdfRedHatPreflightAllowed("4.21.0"); err != nil {
-			t.Fatal(err)
+	// TO BE REMOVED: temporary block of Red Hat ODF 4.21.x.
+	// Restore the allows-4.21 case below when re-enabling 4.21.x.
+	t.Run("rejects 4.21", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("4.21.0")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "temporarily unsupported") {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+	// t.Run("allows 4.21", func(t *testing.T) {
+	// 	if err := OdfRedHatPreflightAllowed("4.21.0"); err != nil {
+	// 		t.Fatal(err)
+	// 	}
+	// })
 	t.Run("rejects 4.19", func(t *testing.T) {
 		err := OdfRedHatPreflightAllowed("4.19.0")
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "4.20.x or 4.21.x") {
+		if !strings.Contains(err.Error(), "4.20.x") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
