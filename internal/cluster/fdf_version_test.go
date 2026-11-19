@@ -37,6 +37,57 @@ func TestFdfOdfPreflightAllowed(t *testing.T) {
 	})
 }
 
+func TestOdfRedHatPreflightAllowed(t *testing.T) {
+	t.Run("allows 4.20", func(t *testing.T) {
+		if err := OdfRedHatPreflightAllowed("4.20.3"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	// TO BE REMOVED: temporary block of Red Hat ODF 4.21.x.
+	// Restore the allows-4.21 case below when re-enabling 4.21.x.
+	t.Run("rejects 4.21", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("4.21.0")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "temporarily unsupported") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	// t.Run("allows 4.21", func(t *testing.T) {
+	// 	if err := OdfRedHatPreflightAllowed("4.21.0"); err != nil {
+	// 		t.Fatal(err)
+	// 	}
+	// })
+	t.Run("rejects 4.19", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("4.19.0")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "4.20.x") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("rejects 4.22", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("4.22.0")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("rejects wrong major", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("5.20.0")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("rejects empty version", func(t *testing.T) {
+		err := OdfRedHatPreflightAllowed("")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestParseFdfMajorMinor(t *testing.T) {
 	maj, min, err := ParseFdfMajorMinor("4.20.5")
 	if err != nil {

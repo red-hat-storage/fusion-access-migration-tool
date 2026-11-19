@@ -13,7 +13,7 @@ Preflight (step 1) **blocks** the migration unless:
 | **OpenShift** | Cluster version must be **4.21.x** (matches `ClusterVersion` history; other minors are rejected). |
 | **Namespaces** | `ibm-spectrum-scale`, `ibm-spectrum-scale-operator`, and `ibm-fusion-access` must exist. |
 | **IBM entitlement** | Secret **`ibm-entitlement-key`** must exist in **`ibm-fusion-access`**; the tool copies it to **`ibm-spectrum-scale`** immediately before deleting the Fusion Access namespace (migrate KMM step). |
-| **ODF/FDF in openshift-storage** | If an `odf-operator` subscription exists, `status.currentCSV` must be set. Its CSV must have provider **IBM** and **`spec.version` 4.20.x** for a new migration. **4.21.x** is only accepted when **resuming** from checkpoint (after install phase may have upgraded FDF). If there is no `odf-operator` subscription, preflight continues (FDF not installed yet). |
+| **ODF/FDF in openshift-storage** | If an `odf-operator` subscription exists, `status.currentCSV` must be set. **Red Hat ODF** must be **`spec.version` 4.20.x** (**4.21.x is temporarily unsupported** for migration/preflight/dry-run and will be re-enabled later). **IBM FDF** must be **`spec.version` 4.20.x** for a new migration; **4.21.x** is only accepted when **resuming** from checkpoint (after install phase may have upgraded FDF). If there is no `odf-operator` subscription, preflight continues (FDF not installed yet). |
 
 The install phase reconciles the `odf-operator` Subscription to channel **`stable-4.21`** and catalog **`isf-data-foundation-catalog`** (clusters on IBM FDF **4.20.x** get an in-place Subscription update). After reconcile, expect IBM FDF on the **4.21.x** line.
 

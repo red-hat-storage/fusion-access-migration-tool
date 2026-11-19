@@ -295,10 +295,13 @@ func ValidateExistingInstalls(mc *kube.Context) error {
 				csvName, specVersion,
 			))
 		case constants.OdfProviderRedHat:
-			return fmt.Errorf(
-				"odf-operator CSV %q has provider %q; only IBM FDF 4.20.x is supported to start migration",
-				csvName, provider,
-			)
+			if err := OdfRedHatPreflightAllowed(specVersion); err != nil {
+				return fmt.Errorf("odf-operator CSV %q (version %s): %w", csvName, specVersion, err)
+			}
+			output.PrintInfo(fmt.Sprintf(
+				"Red Hat ODF odf-operator CSV %q version %s detected — will migrate to IBM FDF in install phase",
+				csvName, specVersion,
+			))
 		default:
 			if provider == "" {
 				return fmt.Errorf("odf-operator CSV %q has no spec.provider.name; cannot validate", csvName)
