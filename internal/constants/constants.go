@@ -47,10 +47,14 @@ const (
 	SecureBootSigningKeySecret    = "secureboot-signing-key"
 	SecureBootSigningKeyPubSecret = "secureboot-signing-key-pub"
 	OdfOperatorSubPrefix          = "odf-operator"
-	OdfConsolePlugin              = "odf-console"
-	ConsoleClusterName            = "cluster"
-	OdfProviderRedHat             = "Red Hat"
-	OdfProviderIBM                = "IBM"
+	// OdfOperatorPackageName is the OLM catalog package name for ODF/FDF, i.e. a PackageManifest's
+	// metadata.name. Same string as OdfOperatorSubPrefix, which is a Subscription name prefix —
+	// kept separate because they identify different objects.
+	OdfOperatorPackageName = "odf-operator"
+	OdfConsolePlugin       = "odf-console"
+	ConsoleClusterName     = "cluster"
+	OdfProviderRedHat      = "Red Hat"
+	OdfProviderIBM         = "IBM"
 
 	KmmModulesResource = "modules.kmm.sigs.x-k8s.io"
 	RequiredOCPVersion = "4.21"
@@ -89,6 +93,13 @@ const (
 	// FDFCatalogSourceReady* — wait for isf-data-foundation-catalog CatalogSource gRPC ready after create/update.
 	FDFCatalogSourceReadyTimeout      = 10 * time.Minute
 	FDFCatalogSourceReadyPollInterval = 1 * time.Minute
+	// FDFPackageManifestWait* — a READY CatalogSource does not imply its PackageManifests exist;
+	// the OLM packageserver publishes them on its own sync, so the first read must be retried.
+	FDFPackageManifestWaitTimeout      = 5 * time.Minute
+	FDFPackageManifestWaitPollInterval = 15 * time.Second
+	// FDFCSVWait* — wait for the odf-operator Subscription to resolve to an IBM CSV in Succeeded phase.
+	FDFCSVWaitTimeout      = 10 * time.Minute
+	FDFCSVWaitPollInterval = 15 * time.Second
 	// KmmCSVWait* — wait for KMM Subscription CSV to reach Succeeded after recreating in openshift-kmm.
 	KmmCSVWaitTimeout      = 10 * time.Minute
 	KmmCSVWaitPollInterval = 30 * time.Second
@@ -127,5 +138,10 @@ var (
 	}
 	InstallPlanGVR = schema.GroupVersionResource{
 		Group: "operators.coreos.com", Version: "v1alpha1", Resource: "installplans",
+	}
+	// PackageManifestGVR is served by the OLM packageserver aggregated API; it exposes the contents of
+	// each CatalogSource index without the tool having to pull and parse the catalog image itself.
+	PackageManifestGVR = schema.GroupVersionResource{
+		Group: "packages.operators.coreos.com", Version: "v1", Resource: "packagemanifests",
 	}
 )

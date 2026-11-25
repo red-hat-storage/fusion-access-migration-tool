@@ -2,6 +2,7 @@
 package spectrumscaleoperator
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -109,13 +110,14 @@ func ensureOpenShiftStorageOperatorGroup(mc *kube.Context) error {
 	return nil
 }
 
-// WaitForFDFAndSpectrumScaleOperatorCSVs waits for the odf-operator subscription CSV in openshift-storage to succeed,
-// then for the IBM Spectrum Scale operator CSV in ibm-spectrum-scale.
+// WaitForFDFAndSpectrumScaleOperatorCSVs waits for the odf-operator subscription in openshift-storage
+// to resolve to an IBM CSV in Succeeded phase, enables the ODF console plugin, then waits for the
+// IBM Spectrum Scale operator CSV in ibm-spectrum-scale.
 func WaitForFDFAndSpectrumScaleOperatorCSVs(mc *kube.Context) error {
 	if mc.DryRun {
 		output.PrintDryRun(fmt.Sprintf(
-			"Would wait for FDF odf-operator CSV Succeeded in %s, enable Console plugin %q, then CSV with prefix %q in %s Succeeded (scale CSV deployment replicas to 1 if 0)",
-			constants.OpenShiftStorageNS, constants.OdfConsolePlugin,
+			"Would wait for the odf-operator CSV in %s to reach Succeeded with provider %q, enable Console plugin %q, then CSV with prefix %q in %s Succeeded (scale CSV deployment replicas to 1 if 0)",
+			constants.OpenShiftStorageNS, constants.OdfProviderIBM, constants.OdfConsolePlugin,
 			constants.SpectrumScaleOperatorCSVNamePrefix, constants.SpectrumScaleNS,
 		))
 		return nil
@@ -183,13 +185,36 @@ func ensureSpectrumScaleOperatorCSVReplicas(mc *kube.Context, csv *unstructured.
 	return nil
 }
 
-func waitForFDFSubscriptionCSVSucceeded(mc *kube.Context, subName string) error {
-	output.PrintInfo("Waiting for FDF CSV to reach Succeeded phase (up to 10 minutes)...")
+func fdfCSVWaitDurations(mc *kube.Context) (timeout, interval time.Duration) {
+	timeout = constants.FDFCSVWaitTimeout
+	interval = constants.FDFCSVWaitPollInterval
+	if mc != nil && mc.FDFCSVWaitTimeout > 0 && mc.FDFCSVWaitPollInterval > 0 {
+		timeout = mc.FDFCSVWaitTimeout
+		interval = mc.FDFCSVWaitPollInterval
+	}
+	return timeout, interval
+}
 
-	return helpers.PollUntil(mc.Ctx, func() (bool, error) {
-		sub, err := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS).Get(
-			mc.Ctx, subName, metav1.GetOptions{},
-		)
+// waitForFDFSubscriptionCSVSucceeded waits until the odf-operator Subscription resolves to an IBM
+// CSV in Succeeded phase.
+//
+// Asserting the provider is what makes this a real check rather than a formality. OLM only replaces
+// an installed CSV when the catalog offers a strictly higher version; when it cannot — the catalog
+// is older than, or identical to, the installed Red Hat ODF — it issues no InstallPlan and
+// status.currentCSV keeps pointing at the already-Succeeded Red Hat CSV. Accepting the phase alone
+// reported the migration as complete while Red Hat ODF was still installed.
+func waitForFDFSubscriptionCSVSucceeded(mc *kube.Context, subName string) error {
+	subRes := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS)
+	timeout, interval := fdfCSVWaitDurations(mc)
+	deadline := time.Now().Add(timeout)
+
+	output.PrintInfo(fmt.Sprintf(
+		"Waiting for the %s CSV in %s to reach Succeeded with provider %q (up to %v)...",
+		subName, constants.OpenShiftStorageNS, constants.OdfProviderIBM, timeout,
+	))
+
+	err := helpers.PollUntil(mc.Ctx, func() (bool, error) {
+		sub, err := subRes.Get(mc.Ctx, subName, metav1.GetOptions{})
 		if err != nil {
 			return false, nil
 		}
@@ -201,15 +226,62 @@ func waitForFDFSubscriptionCSVSucceeded(mc *kube.Context, subName string) error 
 		if err != nil {
 			return false, nil
 		}
+
 		phase := helpers.CSVStatusPhase(csv)
-		if phase == "Succeeded" {
-			provider := helpers.CSVSpecProviderName(csv)
-			output.PrintSuccess(fmt.Sprintf("FDF CSV %s is ready (provider: %s)", csvName, provider))
-			return true, nil
+		provider := helpers.CSVSpecProviderName(csv)
+		switch {
+		case phase != "Succeeded":
+			output.PrintInfo(fmt.Sprintf(
+				"Waiting for CSV %s (phase: %s, provider: %s)... (%s remaining)",
+				csvName, phase, provider, time.Until(deadline).Round(time.Second),
+			))
+			return false, nil
+		case provider != constants.OdfProviderIBM:
+			output.PrintInfo(fmt.Sprintf(
+				"CSV %s is Succeeded but provider is %q, not %q — OLM has not replaced it yet... (%s remaining)",
+				csvName, provider, constants.OdfProviderIBM, time.Until(deadline).Round(time.Second),
+			))
+			return false, nil
 		}
-		output.PrintInfo(fmt.Sprintf("Waiting for FDF CSV %s (current phase: %s)...", csvName, phase))
-		return false, nil
-	}, 10*time.Minute, 15*time.Second, "FDF CSV Succeeded phase")
+
+		output.PrintSuccess(fmt.Sprintf("FDF CSV %s is ready (provider: %s)", csvName, provider))
+		return true, nil
+	}, timeout, interval, fmt.Sprintf("%s CSV Succeeded with provider %s", subName, constants.OdfProviderIBM))
+
+	if err != nil && errors.Is(err, helpers.ErrPollDeadline) {
+		return fmt.Errorf(
+			"%s CSV in %s did not reach Succeeded with provider %q within %v (%s)",
+			subName, constants.OpenShiftStorageNS, constants.OdfProviderIBM, timeout,
+			describeFdfSubscriptionState(mc, subRes, subName),
+		)
+	}
+	return err
+}
+
+// describeFdfSubscriptionState summarises why a Subscription has not produced an IBM CSV, for use in
+// timeout errors. OLM records resolution failures on the Subscription's conditions, so those are the
+// most actionable thing to surface.
+func describeFdfSubscriptionState(mc *kube.Context, subRes dynamic.ResourceInterface, subName string) string {
+	sub, err := subRes.Get(mc.Ctx, subName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Sprintf("could not read Subscription %s: %v", subName, err)
+	}
+
+	conditions := helpers.SubscriptionConditionsSummary(sub)
+	csvName, ok := helpers.SubscriptionCurrentCSV(sub)
+	if !ok {
+		return fmt.Sprintf("status.currentCSV not set yet; conditions: %s", conditions)
+	}
+
+	csv, err := helpers.GetClusterServiceVersion(mc.Ctx, mc.Dynamic, constants.OpenShiftStorageNS, csvName)
+	if err != nil {
+		return fmt.Sprintf("currentCSV=%q (could not read CSV: %v); conditions: %s", csvName, err, conditions)
+	}
+	return fmt.Sprintf(
+		"currentCSV=%q version=%q provider=%q phase=%q; conditions: %s",
+		csvName, helpers.CSVSpecVersion(csv), helpers.CSVSpecProviderName(csv),
+		helpers.CSVStatusPhase(csv), conditions,
+	)
 }
 
 func newFdfOperatorSubscription() *unstructured.Unstructured {
@@ -310,65 +382,6 @@ func odfSubscriptionProvider(mc *kube.Context, sub *unstructured.Unstructured) (
 	return provider, minor, nil
 }
 
-// applyFdfCatalogAndChannelToSubscription updates a subscription's catalog source and channel to target FDF.
-// The channel is set to OdfSubscriptionChannel (stable-4.21). The catalog source is set to FDFCatalogSourceName.
-func applyFdfCatalogAndChannelToSubscription(dst *unstructured.Unstructured) {
-	_ = unstructured.SetNestedField(dst.Object, constants.OdfSubscriptionChannel, "spec", "channel")
-	_ = unstructured.SetNestedField(dst.Object, constants.FDFCatalogSourceName, "spec", "source")
-	_ = unstructured.SetNestedField(dst.Object, constants.OpenShiftMarketplaceNS, "spec", "sourceNamespace")
-}
-
-// reconcileAllOdfSubscriptions updates catalog source and channel for all subscriptions in openshift-storage
-// to point at the FDF catalog. This is used when migrating from Red Hat ODF to IBM FDF.
-func reconcileAllOdfSubscriptions(mc *kube.Context) error {
-	subRes := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS)
-	subs, err := subRes.List(mc.Ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("list subscriptions in %s: %w", constants.OpenShiftStorageNS, err)
-	}
-
-	if len(subs.Items) == 0 {
-		output.PrintInfo(fmt.Sprintf("No subscriptions found in %s", constants.OpenShiftStorageNS))
-		return nil
-	}
-
-	for i := range subs.Items {
-		sub := &subs.Items[i]
-		name := sub.GetName()
-
-		src, _, _ := unstructured.NestedString(sub.Object, "spec", "source")
-		ch, _, _ := unstructured.NestedString(sub.Object, "spec", "channel")
-
-		if src == constants.FDFCatalogSourceName &&
-			ch == constants.OdfSubscriptionChannel {
-			output.PrintSkip(fmt.Sprintf("Subscription %q already points to FDF catalog and channel", name))
-			continue
-		}
-
-		if mc.DryRun {
-			output.PrintDryRun(fmt.Sprintf(
-				"Would update Subscription %q (source=%s→%s, channel=%s→%s, sourceNamespace→%s)",
-				name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
-				constants.OpenShiftMarketplaceNS,
-			))
-			continue
-		}
-
-		output.PrintInfo(fmt.Sprintf(
-			"Updating Subscription %q (source=%s→%s, channel=%s→%s, sourceNamespace→%s)",
-			name, src, constants.FDFCatalogSourceName, ch, constants.OdfSubscriptionChannel,
-			constants.OpenShiftMarketplaceNS,
-		))
-		applyFdfCatalogAndChannelToSubscription(sub)
-		if _, err := subRes.Update(mc.Ctx, sub, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("update Subscription %q in %s: %w", name, constants.OpenShiftStorageNS, err)
-		}
-		output.PrintSuccess(fmt.Sprintf("Updated Subscription %q", name))
-	}
-
-	return nil
-}
-
 // waitForManualInstallPlanApproval checks all subscriptions in openshift-storage for Manual installPlanApproval.
 // For each Manual subscription, it waits for the user to approve the InstallPlan before proceeding.
 func waitForManualInstallPlanApproval(mc *kube.Context) error {
@@ -456,8 +469,12 @@ func pollInstallPlanApproved(mc *kube.Context, subName string) error {
 // CreateFDFSubscriptionAndWait ensures the OperatorGroup and odf-operator Subscription match the FDF install manifest.
 // It supports three scenarios:
 //   - No odf-operator subscription exists: creates a new FDF subscription.
-//   - Red Hat ODF 4.20/4.21 is installed: migrates all subscriptions in openshift-storage to FDF catalog.
-//   - IBM FDF 4.20 is installed: updates channel and catalog source on odf-operator only.
+//   - Red Hat ODF 4.20/4.21 is installed: repoints the odf-operator Subscription at the FDF catalog.
+//   - IBM FDF 4.20 is installed: updates channel and catalog source on odf-operator.
+//
+// In every case only the odf-operator Subscription is written. OLM resolves the dependency
+// subscriptions (ocs-operator, mcg-operator, ocs-client-operator, …) from the new catalog itself,
+// so rewriting them here is both unnecessary and liable to hit their admission webhooks.
 func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 	if err := cluster.EnsureNamespace(mc, constants.OpenShiftStorageNS); err != nil {
 		return err
@@ -510,24 +527,11 @@ func CreateFDFSubscriptionAndWait(mc *kube.Context) error {
 	}
 
 	if provider == constants.OdfProviderRedHat {
-		output.PrintInfo(fmt.Sprintf("Red Hat ODF %d.%d detected — migrating all subscriptions in %s to IBM FDF catalog",
-			constants.RequiredFDFMajor, minor, constants.OpenShiftStorageNS))
-		return reconcileOdfToFdfAndWait(mc)
+		output.PrintInfo(fmt.Sprintf("Red Hat ODF %d.%d detected — repointing the %s Subscription in %s at the IBM FDF catalog",
+			constants.RequiredFDFMajor, minor, subName, constants.OpenShiftStorageNS))
 	}
 
 	return reconcileExistingFdfSubscriptionAndWait(mc, subRes)
-}
-
-// reconcileOdfToFdfAndWait handles Red Hat ODF -> IBM FDF migration by updating all subscriptions
-// in openshift-storage to point at the FDF catalog, then waiting for CSVs.
-func reconcileOdfToFdfAndWait(mc *kube.Context) error {
-	if err := reconcileAllOdfSubscriptions(mc); err != nil {
-		return err
-	}
-	if err := waitForManualInstallPlanApproval(mc); err != nil {
-		return err
-	}
-	return WaitForFDFAndSpectrumScaleOperatorCSVs(mc)
 }
 
 func reconcileExistingFdfSubscriptionAndWait(mc *kube.Context, subRes dynamic.ResourceInterface) error {

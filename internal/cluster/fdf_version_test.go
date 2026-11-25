@@ -43,28 +43,17 @@ func TestOdfRedHatPreflightAllowed(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	// TO BE REMOVED: temporary block of Red Hat ODF 4.21.x.
-	// Restore the allows-4.21 case below when re-enabling 4.21.x.
-	t.Run("rejects 4.21", func(t *testing.T) {
-		err := OdfRedHatPreflightAllowed("4.21.0")
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if !strings.Contains(err.Error(), "temporarily unsupported") {
-			t.Fatalf("unexpected error: %v", err)
+	t.Run("allows 4.21", func(t *testing.T) {
+		if err := OdfRedHatPreflightAllowed("4.21.0"); err != nil {
+			t.Fatal(err)
 		}
 	})
-	// t.Run("allows 4.21", func(t *testing.T) {
-	// 	if err := OdfRedHatPreflightAllowed("4.21.0"); err != nil {
-	// 		t.Fatal(err)
-	// 	}
-	// })
 	t.Run("rejects 4.19", func(t *testing.T) {
 		err := OdfRedHatPreflightAllowed("4.19.0")
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "4.20.x") {
+		if !strings.Contains(err.Error(), "4.20.x or 4.21.x") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -86,6 +75,92 @@ func TestOdfRedHatPreflightAllowed(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+}
+
+func TestFdfCatalogCanReplaceOdf(t *testing.T) {
+	tests := []struct {
+		name        string
+		installed   string
+		offered     string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "offered below installed is blocked",
+			installed:   "4.21.15",
+			offered:     "4.21.13",
+			wantErr:     true,
+			errContains: "does not downgrade",
+		},
+		{
+			name:        "offered equal to installed is blocked",
+			installed:   "4.21.13",
+			offered:     "4.21.13",
+			wantErr:     true,
+			errContains: "already installed",
+		},
+		{
+			name:      "offered one patch above installed is allowed",
+			installed: "4.21.15",
+			offered:   "4.21.16",
+		},
+		{
+			name:      "wide patch gap is allowed",
+			installed: "4.21.10",
+			offered:   "4.21.13",
+		},
+		{
+			name:      "minor upgrade is allowed",
+			installed: "4.20.9",
+			offered:   "4.21.13",
+		},
+		{
+			name:        "minor downgrade is blocked",
+			installed:   "4.21.0",
+			offered:     "4.20.9",
+			wantErr:     true,
+			errContains: "does not downgrade",
+		},
+		{
+			name:        "unparseable installed version",
+			installed:   "4.21",
+			offered:     "4.21.13",
+			wantErr:     true,
+			errContains: "invalid installed ODF version",
+		},
+		{
+			name:        "unparseable offered version",
+			installed:   "4.21.13",
+			offered:     "not-a-version",
+			wantErr:     true,
+			errContains: "invalid FDF catalog version",
+		},
+		{
+			name:        "empty installed version",
+			installed:   "",
+			offered:     "4.21.13",
+			wantErr:     true,
+			errContains: "invalid installed ODF version",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := FdfCatalogCanReplaceOdf(tt.installed, tt.offered)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("FdfCatalogCanReplaceOdf(%q, %q) = nil, want error", tt.installed, tt.offered)
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("error %q does not contain %q", err, tt.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FdfCatalogCanReplaceOdf(%q, %q) = %v, want nil", tt.installed, tt.offered, err)
+			}
+		})
+	}
 }
 
 func TestParseFdfMajorMinor(t *testing.T) {
