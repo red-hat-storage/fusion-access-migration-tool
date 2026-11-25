@@ -1,30 +1,24 @@
 package cluster
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/red-hat-storage/fusion-access-migration-tool/internal/constants"
-	"github.com/red-hat-storage/fusion-access-migration-tool/internal/kube"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
-	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
 func TestValidateBasicClusterHealth(t *testing.T) {
 	t.Run("passes when clusterversion is not failing/degraded", func(t *testing.T) {
-		mc := newValidationTestContext(clusterVersion("False", "False"))
+		mc := newClusterTestContext(nil, clusterVersion("False", "False"))
 		if err := ValidateBasicClusterHealth(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("fails when clusterversion is failing", func(t *testing.T) {
-		mc := newValidationTestContext(clusterVersion("True", "False"))
+		mc := newClusterTestContext(nil, clusterVersion("True", "False"))
 		err := ValidateBasicClusterHealth(mc)
 		if err == nil {
 			t.Fatal("expected error")
@@ -37,7 +31,7 @@ func TestValidateBasicClusterHealth(t *testing.T) {
 
 func TestValidateScaleClusterExists(t *testing.T) {
 	t.Run("fails when no scale clusters exist", func(t *testing.T) {
-		mc := newValidationTestContext()
+		mc := newClusterTestContext(nil)
 		err := ValidateScaleClusterExists(mc)
 		if err == nil {
 			t.Fatal("expected error")
@@ -48,7 +42,7 @@ func TestValidateScaleClusterExists(t *testing.T) {
 	})
 
 	t.Run("passes when at least one scale cluster exists", func(t *testing.T) {
-		mc := newValidationTestContext(scaleCluster("scale-cluster-a"))
+		mc := newClusterTestContext(nil, scaleCluster("scale-cluster-a"))
 		if err := ValidateScaleClusterExists(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
@@ -57,14 +51,14 @@ func TestValidateScaleClusterExists(t *testing.T) {
 
 func TestValidateScaleFilesystemHealthIfPresent(t *testing.T) {
 	t.Run("skips when no filesystems exist", func(t *testing.T) {
-		mc := newValidationTestContext()
+		mc := newClusterTestContext(nil)
 		if err := ValidateScaleFilesystemHealthIfPresent(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("fails when filesystem is not mounted", func(t *testing.T) {
-		mc := newValidationTestContext(filesystem("fs1", "Recovering", false))
+		mc := newClusterTestContext(nil, filesystem("fs1", "Recovering", false))
 		err := ValidateScaleFilesystemHealthIfPresent(mc)
 		if err == nil {
 			t.Fatal("expected error")
@@ -75,7 +69,7 @@ func TestValidateScaleFilesystemHealthIfPresent(t *testing.T) {
 	})
 
 	t.Run("passes when all filesystems are mounted", func(t *testing.T) {
-		mc := newValidationTestContext(
+		mc := newClusterTestContext(nil,
 			filesystem("fs1", "Ready", true),
 			filesystem("fs2", "Ready", true),
 		)
@@ -85,14 +79,14 @@ func TestValidateScaleFilesystemHealthIfPresent(t *testing.T) {
 	})
 
 	t.Run("passes when filesystem uses status conditions Healthy instead of mounted", func(t *testing.T) {
-		mc := newValidationTestContext(filesystemWithHealthyConditions("sharedfs", true))
+		mc := newClusterTestContext(nil, filesystemWithHealthyConditions("sharedfs", true))
 		if err := ValidateScaleFilesystemHealthIfPresent(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("fails when Healthy condition is false", func(t *testing.T) {
-		mc := newValidationTestContext(filesystemWithHealthyConditions("sharedfs", false))
+		mc := newClusterTestContext(nil, filesystemWithHealthyConditions("sharedfs", false))
 		err := ValidateScaleFilesystemHealthIfPresent(mc)
 		if err == nil {
 			t.Fatal("expected error")
@@ -105,28 +99,28 @@ func TestValidateScaleFilesystemHealthIfPresent(t *testing.T) {
 
 func TestValidateLocalDisksReadyIfPresent(t *testing.T) {
 	t.Run("skips when no localdisks exist", func(t *testing.T) {
-		mc := newValidationTestContext()
+		mc := newClusterTestContext(nil)
 		if err := ValidateLocalDisksReadyIfPresent(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("passes when localdisk phase is Ready", func(t *testing.T) {
-		mc := newValidationTestContext(localDiskWithPhase("disk1", "Ready"))
+		mc := newClusterTestContext(nil, localDiskWithPhase("disk1", "Ready"))
 		if err := ValidateLocalDisksReadyIfPresent(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("passes when localdisk has condition Ready=True", func(t *testing.T) {
-		mc := newValidationTestContext(localDiskWithReadyCondition("disk1"))
+		mc := newClusterTestContext(nil, localDiskWithReadyCondition("disk1"))
 		if err := ValidateLocalDisksReadyIfPresent(mc); err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
 	})
 
 	t.Run("fails when localdisk is not ready", func(t *testing.T) {
-		mc := newValidationTestContext(localDiskWithPhase("disk1", "Failed"))
+		mc := newClusterTestContext(nil, localDiskWithPhase("disk1", "Failed"))
 		err := ValidateLocalDisksReadyIfPresent(mc)
 		if err == nil {
 			t.Fatal("expected error")
@@ -135,28 +129,6 @@ func TestValidateLocalDisksReadyIfPresent(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
-}
-
-func newValidationTestContext(objs ...*unstructured.Unstructured) *kube.Context {
-	customListKinds := map[schema.GroupVersionResource]string{
-		{Group: "scale.spectrum.ibm.com", Version: "v1beta1", Resource: "clusters"}:    "ClusterList",
-		{Group: "scale.spectrum.ibm.com", Version: "v1beta1", Resource: "filesystems"}: "FilesystemList",
-		{Group: "scale.spectrum.ibm.com", Version: "v1beta1", Resource: "localdisks"}:  "LocalDiskList",
-	}
-	runtimeObjs := make([]runtime.Object, 0, len(objs))
-	for _, obj := range objs {
-		runtimeObjs = append(runtimeObjs, obj)
-	}
-
-	return &kube.Context{
-		Ctx:       context.Background(),
-		Clientset: kubefake.NewSimpleClientset(),
-		Dynamic: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-			runtime.NewScheme(),
-			customListKinds,
-			runtimeObjs...,
-		),
-	}
 }
 
 func clusterVersion(failing string, degraded string) *unstructured.Unstructured {

@@ -237,83 +237,212 @@ func localDiskReady(disk *unstructured.Unstructured) (bool, string) {
 	return false, "not Ready (missing status.phase/state/conditions)"
 }
 
-func ValidateExistingInstalls(mc *kube.Context) error {
+// installedOdfOperator describes the odf-operator CSV currently resolved by a Subscription in openshift-storage.
+//
+// ResolveErr is set when the Subscription could not be resolved to a CSV. It is carried per entry
+// rather than returned immediately so that callers keep reporting problems in Subscription order —
+// resolving every Subscription up front and failing on the first unresolvable one would surface a
+// different error than the original single-pass loop did.
+type installedOdfOperator struct {
+	SubscriptionName string
+	CSVName          string
+	Provider         string
+	Version          string
+	ResolveErr       error
+}
+
+// findInstalledOdfOperators returns one entry per odf-operator* Subscription in openshift-storage,
+// resolved through status.currentCSV to the CSV's provider and version.
+//
+// nsPresent is false when openshift-storage does not exist, which means FDF has not been installed
+// yet and there is nothing to validate. A returned error is a failure to enumerate Subscriptions at
+// all; per-Subscription resolution failures are reported in each entry's ResolveErr.
+func findInstalledOdfOperators(mc *kube.Context) (ops []installedOdfOperator, nsPresent bool, err error) {
 	_, nsErr := mc.Clientset.CoreV1().Namespaces().Get(mc.Ctx, constants.OpenShiftStorageNS, metav1.GetOptions{})
 	if nsErr != nil {
 		if apierrors.IsNotFound(nsErr) {
-			output.PrintInfo(fmt.Sprintf("Namespace %s not present; skipping ODF/FDF subscription checks (created when installing FDF)", constants.OpenShiftStorageNS))
-			output.PrintSuccess("No conflicting FDF installation found")
-			return nil
+			return nil, false, nil
 		}
-		return fmt.Errorf("failed to get namespace %s: %w", constants.OpenShiftStorageNS, nsErr)
+		return nil, false, fmt.Errorf("failed to get namespace %s: %w", constants.OpenShiftStorageNS, nsErr)
 	}
 
 	subs, err := mc.Dynamic.Resource(constants.SubscriptionGVR).Namespace(constants.OpenShiftStorageNS).List(mc.Ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("list subscriptions in %s: %w", constants.OpenShiftStorageNS, err)
+		return nil, true, fmt.Errorf("list subscriptions in %s: %w", constants.OpenShiftStorageNS, err)
 	}
 
-	var odfSubs []unstructured.Unstructured
 	for i := range subs.Items {
-		if strings.HasPrefix(subs.Items[i].GetName(), constants.OdfOperatorSubPrefix) {
-			odfSubs = append(odfSubs, subs.Items[i])
-		}
-	}
-
-	if len(odfSubs) == 0 {
-		output.PrintSuccess("No conflicting FDF installation found")
-		return nil
-	}
-
-	for _, sub := range odfSubs {
+		sub := &subs.Items[i]
 		name := sub.GetName()
-		output.PrintInfo(fmt.Sprintf("Found existing ODF subscription: %s", name))
+		if !strings.HasPrefix(name, constants.OdfOperatorSubPrefix) {
+			continue
+		}
 
-		csvName, ok := helpers.SubscriptionCurrentCSV(&sub)
+		csvName, ok := helpers.SubscriptionCurrentCSV(sub)
 		if !ok {
-			return fmt.Errorf(
-				"odf-operator subscription %q in %s has no status.currentCSV yet; wait until OLM resolves the CSV before migration preflight",
-				name, constants.OpenShiftStorageNS,
-			)
+			ops = append(ops, installedOdfOperator{
+				SubscriptionName: name,
+				ResolveErr: fmt.Errorf(
+					"odf-operator subscription %q in %s has no status.currentCSV yet; wait until OLM resolves the CSV before migration preflight",
+					name, constants.OpenShiftStorageNS,
+				),
+			})
+			continue
 		}
 
 		csv, err := helpers.GetClusterServiceVersion(mc.Ctx, mc.Dynamic, constants.OpenShiftStorageNS, csvName)
 		if err != nil {
-			return fmt.Errorf("get CSV %q in %s: %w", csvName, constants.OpenShiftStorageNS, err)
+			ops = append(ops, installedOdfOperator{
+				SubscriptionName: name,
+				CSVName:          csvName,
+				ResolveErr:       fmt.Errorf("get CSV %q in %s: %w", csvName, constants.OpenShiftStorageNS, err),
+			})
+			continue
 		}
 
-		provider := helpers.CSVSpecProviderName(csv)
-		specVersion := helpers.CSVSpecVersion(csv)
+		ops = append(ops, installedOdfOperator{
+			SubscriptionName: name,
+			CSVName:          csvName,
+			Provider:         helpers.CSVSpecProviderName(csv),
+			Version:          helpers.CSVSpecVersion(csv),
+		})
+	}
 
-		switch provider {
+	return ops, true, nil
+}
+
+func ValidateExistingInstalls(mc *kube.Context) error {
+	odfOperators, nsPresent, err := findInstalledOdfOperators(mc)
+	if err != nil {
+		return err
+	}
+	if !nsPresent {
+		output.PrintInfo(fmt.Sprintf("Namespace %s not present; skipping ODF/FDF subscription checks (created when installing FDF)", constants.OpenShiftStorageNS))
+		output.PrintSuccess("No conflicting FDF installation found")
+		return nil
+	}
+
+	if len(odfOperators) == 0 {
+		output.PrintSuccess("No conflicting FDF installation found")
+		return nil
+	}
+
+	for _, odf := range odfOperators {
+		output.PrintInfo(fmt.Sprintf("Found existing ODF subscription: %s", odf.SubscriptionName))
+
+		if odf.ResolveErr != nil {
+			return odf.ResolveErr
+		}
+
+		switch odf.Provider {
 		case constants.OdfProviderIBM:
-			if err := FdfOdfPreflightAllowed(specVersion, mc.ResumingFromCheckpoint); err != nil {
-				return fmt.Errorf("odf-operator CSV %q (version %s): %w", csvName, specVersion, err)
+			if err := FdfOdfPreflightAllowed(odf.Version, mc.ResumingFromCheckpoint); err != nil {
+				return fmt.Errorf("odf-operator CSV %q (version %s): %w", odf.CSVName, odf.Version, err)
 			}
 			output.PrintInfo(fmt.Sprintf(
 				"IBM FDF odf-operator CSV %q version %s passed preflight",
-				csvName, specVersion,
+				odf.CSVName, odf.Version,
 			))
 		case constants.OdfProviderRedHat:
-			if err := OdfRedHatPreflightAllowed(specVersion); err != nil {
-				return fmt.Errorf("odf-operator CSV %q (version %s): %w", csvName, specVersion, err)
+			if err := OdfRedHatPreflightAllowed(odf.Version); err != nil {
+				return fmt.Errorf("odf-operator CSV %q (version %s): %w", odf.CSVName, odf.Version, err)
 			}
 			output.PrintInfo(fmt.Sprintf(
 				"Red Hat ODF odf-operator CSV %q version %s detected — will migrate to IBM FDF in install phase",
-				csvName, specVersion,
+				odf.CSVName, odf.Version,
 			))
 		default:
-			if provider == "" {
-				return fmt.Errorf("odf-operator CSV %q has no spec.provider.name; cannot validate", csvName)
+			if odf.Provider == "" {
+				return fmt.Errorf("odf-operator CSV %q has no spec.provider.name; cannot validate", odf.CSVName)
 			}
 			return fmt.Errorf(
 				"odf-operator CSV %q has unsupported provider %q; only IBM FDF 4.20.x is supported to start migration",
-				csvName, provider,
+				odf.CSVName, odf.Provider,
 			)
 		}
 	}
 
 	output.PrintSuccess("Existing ODF/FDF installation validated for migration")
+	return nil
+}
+
+// ValidateFdfCatalogVersionSupportsInstalledOdf blocks migration when the FDF catalog's
+// odf-operator version is not strictly above an installed Red Hat ODF. In that case OLM issues no
+// InstallPlan, the Red Hat CSVs stay in place, and the rest of the migration would run against a
+// cluster that never moved to FDF.
+//
+// This rules out the version-ordering cause only. OLM also needs an upgrade edge
+// (replaces/skips/skipRange) from the installed CSV, which cannot be determined from versions
+// alone, so passing this check does not guarantee the swap will happen — the provider assertion in
+// the install phase is what ultimately catches a migration that did not take effect.
+//
+// Determining the catalog version requires the FDF CatalogSource to exist, so this check creates or
+// updates it via EnsureFDFCatalogSource. That writes only to the CatalogSource — it touches nothing
+// in Fusion Access — but on a cluster that already has one, its spec is overwritten. Because it
+// then waits for the catalog to report READY and for the package to be published, it is by far the
+// slowest preflight check, so it runs last and short-circuits whenever the comparison is
+// unnecessary.
+func ValidateFdfCatalogVersionSupportsInstalledOdf(mc *kube.Context) error {
+	odfOperators, nsPresent, err := findInstalledOdfOperators(mc)
+	if err != nil {
+		return err
+	}
+	if !nsPresent || len(odfOperators) == 0 {
+		output.PrintSkip(fmt.Sprintf(
+			"No ODF installation in %s; FDF catalog version check not required",
+			constants.OpenShiftStorageNS,
+		))
+		return nil
+	}
+
+	var redHat []installedOdfOperator
+	for _, odf := range odfOperators {
+		// Unresolvable Subscriptions have already failed ValidateExistingInstalls, which runs first.
+		if odf.ResolveErr != nil {
+			continue
+		}
+		if odf.Provider == constants.OdfProviderRedHat {
+			redHat = append(redHat, odf)
+		}
+	}
+	if len(redHat) == 0 {
+		output.PrintSkip("No Red Hat ODF to replace; FDF catalog version check not required")
+		return nil
+	}
+
+	if mc.DryRun {
+		output.PrintWarning(fmt.Sprintf(
+			"Dry-run does not create CatalogSource %s, so the FDF catalog version cannot be compared "+
+				"against the installed Red Hat ODF. Re-run without MIGRATION_DRY_RUN to verify that the "+
+				"catalog is new enough to replace it",
+			constants.FDFCatalogSourceName,
+		))
+		return nil
+	}
+
+	output.PrintInfo(fmt.Sprintf(
+		"Red Hat ODF detected; checking that CatalogSource %s offers a newer %s",
+		constants.FDFCatalogSourceName, constants.OdfOperatorPackageName,
+	))
+	if err := EnsureFDFCatalogSource(mc); err != nil {
+		return fmt.Errorf("ensure FDF CatalogSource for version check: %w", err)
+	}
+
+	csvName, offered, err := WaitForFdfOfferedOdfVersion(mc)
+	if err != nil {
+		return err
+	}
+
+	for _, odf := range redHat {
+		if err := FdfCatalogCanReplaceOdf(odf.Version, offered); err != nil {
+			return fmt.Errorf("installed Red Hat ODF CSV %q: %w", odf.CSVName, err)
+		}
+	}
+
+	output.PrintSuccess(fmt.Sprintf(
+		"FDF catalog offers %s %s (%s) on channel %s; installed Red Hat ODF can be replaced",
+		constants.OdfOperatorPackageName, offered, csvName, constants.OdfSubscriptionChannel,
+	))
 	return nil
 }
 

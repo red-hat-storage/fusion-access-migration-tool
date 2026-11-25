@@ -31,6 +31,17 @@ type Context struct {
 	// FusionOperatorCSVWaitTimeout and FusionOperatorCSVWaitPollInterval override CSV wait behavior when both are > 0 (tests only).
 	FusionOperatorCSVWaitTimeout      time.Duration
 	FusionOperatorCSVWaitPollInterval time.Duration
+	// FDFCSVWaitTimeout and FDFCSVWaitPollInterval override the odf-operator CSV wait when both are > 0 (tests only).
+	FDFCSVWaitTimeout      time.Duration
+	FDFCSVWaitPollInterval time.Duration
+	// FDFPackageManifestWaitTimeout and FDFPackageManifestWaitPollInterval override the wait for the
+	// FDF catalog to publish its odf-operator PackageManifest when both are > 0 (tests only).
+	FDFPackageManifestWaitTimeout      time.Duration
+	FDFPackageManifestWaitPollInterval time.Duration
+	// FDFCatalogReadyTimeout and FDFCatalogReadyPollInterval override the CatalogSource READY wait
+	// when both are > 0 (tests only).
+	FDFCatalogReadyTimeout      time.Duration
+	FDFCatalogReadyPollInterval time.Duration
 }
 
 // NewInClusterContext builds clients from in-cluster service account configuration.

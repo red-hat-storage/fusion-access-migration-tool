@@ -22,8 +22,10 @@ func ParseFdfMajorMinor(specVersion string) (major, minor uint64, err error) {
 }
 
 // OdfRedHatPreflightAllowed validates Red Hat ODF odf-operator CSV spec.version for preflight.
-// Red Hat ODF 4.20.x is accepted as a valid starting point for migration to IBM FDF.
-// Red Hat ODF 4.21.x is temporarily blocked and will be re-allowed later.
+// Red Hat ODF 4.20.x and 4.21.x are accepted as valid starting points for migration to IBM FDF.
+//
+// This covers the minor only. Acceptance is additionally gated by FdfCatalogCanReplaceOdf, which
+// compares the installed version against what the FDF catalog actually offers.
 func OdfRedHatPreflightAllowed(specVersion string) error {
 	major, minor, err := ParseFdfMajorMinor(specVersion)
 	if err != nil {
@@ -32,20 +34,48 @@ func OdfRedHatPreflightAllowed(specVersion string) error {
 	if major != constants.RequiredFDFMajor {
 		return fmt.Errorf("unsupported CSV spec.version major (want %d.x, got %d.%d)", constants.RequiredFDFMajor, major, minor)
 	}
-	// TO BE REMOVED: temporary block of Red Hat ODF 4.21.x.
-	// Delete this block (and the temporary reject below) to restore the current flow
-	// that accepts 4.20.x and 4.21.x.
-	if minor == 21 {
-		return fmt.Errorf("unsupported Red Hat ODF 4.21.x: temporarily unsupported for migration (only 4.20.x is accepted)")
-	}
-	// Current / future allowlist (restore by removing the TO BE REMOVED block above):
-	// if minor != 20 && minor != 21 {
-	// 	return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x or 4.21.x)", minor)
-	// }
-	if minor != 20 {
-		return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x)", minor)
+	if minor != 20 && minor != 21 {
+		return fmt.Errorf("unsupported Red Hat ODF minor %d (migration supports 4.20.x or 4.21.x)", minor)
 	}
 	return nil
+}
+
+// FdfCatalogCanReplaceOdf reports whether OLM can move the installed odf-operator CSV onto the
+// version the FDF catalog offers. OLM resolves upgrades by CSV name, and Red Hat and IBM builds
+// share the odf-operator.vX.Y.Z naming scheme, so the FDF catalog head must be strictly greater
+// than the installed version:
+//
+//   - offered > installed: OLM generates an InstallPlan and the IBM CSV replaces the Red Hat one.
+//   - offered == installed: the CSV name already exists, OLM considers it installed and does
+//     nothing; the Red Hat CSV silently stays.
+//   - offered < installed: OLM does not downgrade; the Red Hat CSV silently stays.
+//
+// This tool blocks rather than forcing the swap by deleting CSVs, so the remedy for the last two
+// cases is an FDF release above the installed ODF version.
+func FdfCatalogCanReplaceOdf(installedODF, fdfOffered string) error {
+	installed, err := version.ParseSemantic(strings.TrimSpace(installedODF))
+	if err != nil {
+		return fmt.Errorf("invalid installed ODF version %q: %w", installedODF, err)
+	}
+	offered, err := version.ParseSemantic(strings.TrimSpace(fdfOffered))
+	if err != nil {
+		return fmt.Errorf("invalid FDF catalog version %q: %w", fdfOffered, err)
+	}
+
+	if offered.GreaterThan(installed) {
+		return nil
+	}
+
+	reason := "OLM does not downgrade an installed operator"
+	if offered.EqualTo(installed) {
+		reason = "OLM resolves upgrades by CSV name, so an identical version is treated as already installed"
+	}
+	return fmt.Errorf(
+		"installed ODF %s is not below the FDF catalog version %s: %s, so the Red Hat CSVs would not be "+
+			"replaced and the migration would leave ODF in place. Migrate once an FDF release above %s is "+
+			"available in the catalog (this tool will not downgrade ODF)",
+		installed, offered, reason, installed,
+	)
 }
 
 // FdfOdfPreflightAllowed validates IBM FDF odf-operator CSV spec.version for preflight.

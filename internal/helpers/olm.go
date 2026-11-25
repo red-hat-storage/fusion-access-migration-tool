@@ -2,6 +2,8 @@ package helpers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/red-hat-storage/fusion-access-migration-tool/internal/constants"
 
@@ -46,6 +48,44 @@ func GetClusterServiceVersion(ctx context.Context, dyn dynamic.Interface, namesp
 func SubscriptionInstallPlanApproval(sub *unstructured.Unstructured) string {
 	ipa, _, _ := unstructured.NestedString(sub.Object, "spec", "installPlanApproval")
 	return ipa
+}
+
+// SubscriptionConditionsSummary renders status.conditions as "Type=Status(Reason: Message)" entries.
+// OLM reports resolution problems here — ResolutionFailed and CatalogSourcesUnhealthy in particular —
+// which is the most useful diagnostic when a Subscription never produces an InstallPlan.
+func SubscriptionConditionsSummary(sub *unstructured.Unstructured) string {
+	const none = "(no status.conditions)"
+	conditions, found, err := unstructured.NestedSlice(sub.Object, "status", "conditions")
+	if err != nil || !found || len(conditions) == 0 {
+		return none
+	}
+
+	parts := make([]string, 0, len(conditions))
+	for _, raw := range conditions {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		condType, _, _ := unstructured.NestedString(m, "type")
+		status, _, _ := unstructured.NestedString(m, "status")
+		reason, _, _ := unstructured.NestedString(m, "reason")
+		message, _, _ := unstructured.NestedString(m, "message")
+
+		entry := fmt.Sprintf("%s=%s", condType, status)
+		switch {
+		case reason != "" && message != "":
+			entry += fmt.Sprintf("(%s: %s)", reason, message)
+		case reason != "":
+			entry += fmt.Sprintf("(%s)", reason)
+		case message != "":
+			entry += fmt.Sprintf("(%s)", message)
+		}
+		parts = append(parts, entry)
+	}
+	if len(parts) == 0 {
+		return none
+	}
+	return strings.Join(parts, "; ")
 }
 
 // SubscriptionInstallPlanRef returns the name from status.installPlanRef on a Subscription.

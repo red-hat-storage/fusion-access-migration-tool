@@ -6,7 +6,8 @@ import (
 )
 
 // PreflightValidations runs connectivity, OCP version, installation, namespace,
-// cluster health, Scale readiness, and secure boot signing secret checks.
+// cluster health, Scale readiness, secure boot signing secret, and FDF catalog
+// version checks.
 func PreflightValidations(mc *kube.Context) error {
 	if err := cluster.ValidateClusterConnectivity(mc); err != nil {
 		return err
@@ -33,6 +34,12 @@ func PreflightValidations(mc *kube.Context) error {
 		return err
 	}
 	if err := cluster.ValidateSecureBootSigningSecrets(mc); err != nil {
+		return err
+	}
+	// Last: this is the only preflight check that creates a resource and waits on it (the FDF
+	// CatalogSource must be READY before its contents can be read), so every cheap read-only
+	// check fails fast ahead of it.
+	if err := cluster.ValidateFdfCatalogVersionSupportsInstalledOdf(mc); err != nil {
 		return err
 	}
 	return nil

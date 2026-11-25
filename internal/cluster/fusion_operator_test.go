@@ -1,23 +1,19 @@
 package cluster
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/red-hat-storage/fusion-access-migration-tool/internal/constants"
-	"github.com/red-hat-storage/fusion-access-migration-tool/internal/kube"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
-	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -126,30 +122,6 @@ func TestOperatorGroupTargetsNamespace(t *testing.T) {
 	}
 }
 
-func newFusionOperatorTestContext(cs kubernetes.Interface, dynObjs ...*unstructured.Unstructured) *kube.Context {
-	if cs == nil {
-		cs = kubefake.NewSimpleClientset()
-	}
-	customListKinds := map[schema.GroupVersionResource]string{
-		constants.OperatorGroupGVR: "OperatorGroupList",
-		constants.OdfManagerGVR:    "OdfManagerList",
-	}
-	runtimeObjs := make([]runtime.Object, 0, len(dynObjs))
-	for _, o := range dynObjs {
-		runtimeObjs = append(runtimeObjs, o)
-	}
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		runtime.NewScheme(),
-		customListKinds,
-		runtimeObjs...,
-	)
-	return &kube.Context{
-		Ctx:       context.Background(),
-		Clientset: cs,
-		Dynamic:   dyn,
-	}
-}
-
 func coreNamespace(name string) *corev1.Namespace {
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -231,7 +203,7 @@ func testFusionCSVSucceeded(name string) *unstructured.Unstructured {
 
 func TestEnsureFusionOperatorOLMInstall_createsWhenMissing(t *testing.T) {
 	catalogImage := "icr.io/example/ibm-operator-catalog:test"
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.FusionOperatorCatalogImage = catalogImage
 	mc.DryRun = false
 
@@ -286,7 +258,7 @@ func TestEnsureFusionOperatorOLMInstall_skipsWhenResourcesExist(t *testing.T) {
 	og := testFusionOperatorGroup(constants.FusionOperatorGroupName)
 	cat := testFusionCatalogSource()
 	sub := testFusionSubscription(false)
-	mc := newFusionOperatorTestContext(cs, og, cat, sub)
+	mc := newClusterTestContext(cs, og, cat, sub)
 	mc.FusionOperatorCatalogImage = "icr.io/other/catalog:latest"
 	mc.DryRun = false
 
@@ -311,7 +283,7 @@ func TestEnsureFusionOperatorOLMInstall_skipsWhenResourcesExist(t *testing.T) {
 }
 
 func TestEnsureFusionOperatorOLMInstall_dryRun(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.DryRun = true
 	mc.FusionOperatorCatalogImage = "icr.io/example/catalog:latest"
 
@@ -334,7 +306,7 @@ func TestEnsureFusionOperatorOLMInstall_dryRun(t *testing.T) {
 }
 
 func TestEnsureFusionOperatorResources_dryRun(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.DryRun = true
 	mc.FusionOperatorCatalogImage = "icr.io/example/catalog:latest"
 
@@ -349,7 +321,7 @@ func TestEnsureFusionOperatorResources_dryRun(t *testing.T) {
 }
 
 func TestEnsureFusionOperatorOLMInstall_apiErrorOnOperatorGroupList(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.FusionOperatorCatalogImage = "icr.io/x:latest"
 	mc.DryRun = false
 
@@ -369,7 +341,7 @@ func TestEnsureFusionOperatorOLMInstall_apiErrorOnOperatorGroupList(t *testing.T
 
 func TestEnsureFusionOperatorOLMInstall_apiErrorOnCatalogSourceGet(t *testing.T) {
 	cs := kubefake.NewSimpleClientset(coreNamespace(constants.FusionOperatorNS))
-	mc := newFusionOperatorTestContext(cs, testFusionOperatorGroup(constants.FusionOperatorGroupName))
+	mc := newClusterTestContext(cs, testFusionOperatorGroup(constants.FusionOperatorGroupName))
 	mc.FusionOperatorCatalogImage = "icr.io/x:latest"
 	mc.DryRun = false
 
@@ -389,7 +361,7 @@ func TestEnsureFusionOperatorOLMInstall_apiErrorOnCatalogSourceGet(t *testing.T)
 
 func TestWaitForFusionOperatorCSVSucceeded_success(t *testing.T) {
 	csvName := "isf-operator.v2.0.0-test"
-	mc := newFusionOperatorTestContext(
+	mc := newClusterTestContext(
 		kubefake.NewSimpleClientset(coreNamespace(constants.FusionOperatorNS)),
 		testFusionSubscription(true),
 		testFusionCSVSucceeded(csvName),
@@ -404,7 +376,7 @@ func TestWaitForFusionOperatorCSVSucceeded_success(t *testing.T) {
 }
 
 func TestWaitForFusionOperatorCSVSucceeded_getSubscriptionError(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.FusionOperatorCSVWaitTimeout = 100 * time.Millisecond
 	mc.FusionOperatorCSVWaitPollInterval = 10 * time.Millisecond
 	mc.DryRun = false
@@ -424,7 +396,7 @@ func TestWaitForFusionOperatorCSVSucceeded_getSubscriptionError(t *testing.T) {
 }
 
 func TestWaitForFusionOperatorCSVSucceeded_timesOutWithoutCurrentCSV(t *testing.T) {
-	mc := newFusionOperatorTestContext(
+	mc := newClusterTestContext(
 		kubefake.NewSimpleClientset(coreNamespace(constants.FusionOperatorNS)),
 		testFusionSubscription(false),
 	)
@@ -459,7 +431,7 @@ func testOdfManager() *unstructured.Unstructured {
 }
 
 func TestEnsureOdfManager_createsWhenMissing(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.DryRun = false
 
 	if err := ensureOdfManager(mc); err != nil {
@@ -486,7 +458,7 @@ func TestEnsureOdfManager_createsWhenMissing(t *testing.T) {
 
 func TestEnsureOdfManager_skipsWhenExists(t *testing.T) {
 	existing := testOdfManager()
-	mc := newFusionOperatorTestContext(nil, existing)
+	mc := newClusterTestContext(nil, existing)
 	mc.DryRun = false
 
 	if err := ensureOdfManager(mc); err != nil {
@@ -506,7 +478,7 @@ func TestEnsureOdfManager_skipsWhenExists(t *testing.T) {
 }
 
 func TestEnsureOdfManager_dryRun(t *testing.T) {
-	mc := newFusionOperatorTestContext(nil)
+	mc := newClusterTestContext(nil)
 	mc.DryRun = true
 
 	if err := ensureOdfManager(mc); err != nil {

@@ -99,6 +99,11 @@ rules:
   - apiGroups: ["operators.coreos.com"]
     resources: ["installplans"]
     verbs: ["get"]
+  # Preflight reads the FDF catalog's odf-operator version from the OLM packageserver so it can
+  # refuse a migration the catalog is too old to perform.
+  - apiGroups: ["packages.operators.coreos.com"]
+    resources: ["packagemanifests"]
+    verbs: ["list"]
   - apiGroups: ["kmm.sigs.x-k8s.io"]
     resources: ["modules"]
     verbs: ["get", "list", "update", "patch", "delete"]
