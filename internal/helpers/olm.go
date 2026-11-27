@@ -41,3 +41,15 @@ func CSVSpecVersion(csv *unstructured.Unstructured) string {
 func GetClusterServiceVersion(ctx context.Context, dyn dynamic.Interface, namespace, name string) (*unstructured.Unstructured, error) {
 	return dyn.Resource(constants.CsvGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 }
+
+// SubscriptionInstallPlanApproval returns spec.installPlanApproval from a Subscription (e.g. "Automatic" or "Manual").
+func SubscriptionInstallPlanApproval(sub *unstructured.Unstructured) string {
+	ipa, _, _ := unstructured.NestedString(sub.Object, "spec", "installPlanApproval")
+	return ipa
+}
+
+// SubscriptionInstallPlanRef returns the name from status.installPlanRef on a Subscription.
+func SubscriptionInstallPlanRef(sub *unstructured.Unstructured) (string, bool) {
+	name, found, _ := unstructured.NestedString(sub.Object, "status", "installPlanRef", "name")
+	return name, found && name != ""
+}
