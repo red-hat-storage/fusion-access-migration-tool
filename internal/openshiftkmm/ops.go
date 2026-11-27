@@ -1,4 +1,7 @@
-// Package openshiftkmm — removes KMM Subscription from Fusion Access when present, then ensures openshift-kmm.
+// Package openshiftkmm migrates the KMM operator Subscription to openshift-kmm when
+// it originally lived in ibm-fusion-access. If the Subscription was never in
+// ibm-fusion-access (operator installed in another namespace), the migration is
+// skipped because the operator is managed externally.
 package openshiftkmm
 
 import (
@@ -153,10 +156,89 @@ func deleteKMMSubscriptionFromFusionAccessNamespace(mc *kube.Context) error {
 	return nil
 }
 
+// RecreateKMMSubscription migrates the KMM operator Subscription from
+// ibm-fusion-access to openshift-kmm when it was originally installed there.
+// If there is no KMM Subscription in ibm-fusion-access the operator is managed
+// in another namespace and subscription migration is skipped entirely.
+//
+// When ibm-fusion-access is already gone (tool restart), the function checks
+// openshift-kmm for an existing subscription (previous run completed), and
+// falls back to CSV presence in ibm-spectrum-scale to detect an externally
+// managed operator. Only when neither is found does it create a new subscription
+// in openshift-kmm (interrupted-migration recovery).
 func RecreateKMMSubscription(mc *kube.Context) error {
-	if err := deleteKMMSubscriptionFromFusionAccessNamespace(mc); err != nil {
+	ns := constants.FusionAccessNS
+	_, nsErr := mc.Clientset.CoreV1().Namespaces().Get(mc.Ctx, ns, metav1.GetOptions{})
+	faNamespaceExists := nsErr == nil
+	if nsErr != nil && !apierrors.IsNotFound(nsErr) {
+		return fmt.Errorf("get namespace %s: %w", ns, nsErr)
+	}
+
+	if faNamespaceExists {
+		faSubNames, err := subscriptionNamesForPackage(mc, ns, kmmPackageName)
+		if err != nil {
+			return err
+		}
+		if len(faSubNames) == 0 {
+			output.PrintSkip(fmt.Sprintf(
+				"No KMM Subscription (package %q) in %s — operator is managed in another namespace; skipping subscription migration",
+				kmmPackageName, ns,
+			))
+			return nil
+		}
+		if err := deleteKMMSubscriptionFromFusionAccessNamespace(mc); err != nil {
+			return err
+		}
+		return createKMMSubscriptionInOpenShiftKMM(mc)
+	}
+
+	// FA namespace is gone (tool restart). Determine the right action.
+	output.PrintInfo(fmt.Sprintf("Namespace %s not found — checking whether KMM subscription migration is needed", ns))
+
+	existing, err := subscriptionNamesForPackage(mc, constants.KmmNS, kmmPackageName)
+	if err != nil {
 		return err
 	}
+	if len(existing) > 0 {
+		output.PrintSkip(fmt.Sprintf(
+			"KMM subscription already present in %s (package %q: %v) — previous run migrated it",
+			constants.KmmNS, kmmPackageName, existing,
+		))
+		return waitForKMMCSVSucceeded(mc)
+	}
+
+	if kmmCSVExistsInNamespace(mc, constants.SpectrumScaleNS) {
+		output.PrintSkip(fmt.Sprintf(
+			"KMM CSV found in %s — operator is managed externally; skipping subscription migration",
+			constants.SpectrumScaleNS,
+		))
+		return nil
+	}
+
+	output.PrintInfo("No KMM subscription or CSV found — creating subscription in openshift-kmm (interrupted migration recovery)")
+	return createKMMSubscriptionInOpenShiftKMM(mc)
+}
+
+// kmmCSVExistsInNamespace checks whether any ClusterServiceVersion whose name
+// starts with the KMM package name exists in the given namespace. OLM copies
+// CSVs to every namespace for cluster-scoped operators, so presence in a
+// non-owner namespace indicates the operator is running (managed elsewhere).
+func kmmCSVExistsInNamespace(mc *kube.Context, ns string) bool {
+	csvList, err := mc.Dynamic.Resource(constants.CsvGVR).Namespace(ns).List(mc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return false
+	}
+	for _, csv := range csvList.Items {
+		if strings.HasPrefix(csv.GetName(), kmmPackageName) {
+			return true
+		}
+	}
+	return false
+}
+
+// createKMMSubscriptionInOpenShiftKMM ensures the openshift-kmm namespace,
+// OperatorGroup, and Subscription exist, then waits for the CSV to succeed.
+func createKMMSubscriptionInOpenShiftKMM(mc *kube.Context) error {
 	if err := cluster.EnsureNamespace(mc, constants.KmmNS); err != nil {
 		return err
 	}
